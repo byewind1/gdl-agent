@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gdl-agent"
+version = "0.3.0"
+description = "AI Agent for automated ArchiCAD GDL library object development"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["archicad", "gdl", "bim", "ai-agent", "llm", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "litellm>=1.40.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4.0",
+]
+local = [
+    "ollama>=0.2.0",
+]
+
+[project.scripts]
+gdl-agent = "gdl_agent.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/byewind/gdl-agent"
+Repository = "https://github.com/byewind/gdl-agent"
+Issues = "https://github.com/byewind/gdl-agent/issues"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
