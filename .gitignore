@@ -14,5 +14,5 @@ config.toml
 output/
 src/
 .qoder/
-knowledge/*.md
+knowledge/ccgdl_dev_doc/
 skills/*.md

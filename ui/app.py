@@ -180,14 +180,21 @@ def get_llm():
     )
     return LLMAdapter(config)
 
-def load_knowledge():
+def load_knowledge(task_type: str = "all"):
+    """
+    Load knowledge base documents.
+
+    Args:
+        task_type: One of 'create', 'modify', 'debug', 'all'
+    """
     kb_dir = Path(st.session_state.work_dir) / "knowledge"
     if not kb_dir.exists():
         # Fallback to project's knowledge dir
         kb_dir = Path(__file__).parent.parent / "knowledge"
     kb = KnowledgeBase(str(kb_dir))
     kb.load()
-    return kb.get_all()
+    # Use layered loading by task type
+    return kb.get_by_task_type(task_type)
 
 def load_skills():
     sk_dir = Path(st.session_state.work_dir) / "skills"

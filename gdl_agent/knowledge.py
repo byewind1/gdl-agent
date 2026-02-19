@@ -2,8 +2,10 @@
 Knowledge management for GDL Agent.
 
 Loads reference documents from the knowledge/ directory and injects them
-into LLM prompts. Supports both full-document injection (for models with
-large context windows) and simple keyword-based relevance filtering.
+into LLM prompts. Supports:
+- Layered loading (by task type)
+- Keyword-based relevance filtering
+- Premium knowledge base support (ccgdl_dev_doc)
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ class KnowledgeBase:
 
     The knowledge base is a directory of Markdown files that contain:
     - GDL syntax reference
-    - XML structure templates
+    - Control flow and parameters
     - Common error patterns and fixes
+    - 2D commands and functions
 
     These are loaded into the LLM's system prompt to compensate for the
     scarcity of GDL training data.
@@ -29,6 +32,14 @@ class KnowledgeBase:
         self.knowledge_dir = Path(knowledge_dir)
         self._docs: dict[str, str] = {}
         self._loaded = False
+
+        # Define document layers by task type
+        self._layers = {
+            "create": ["GDL_quick_reference", "GDL_parameters", "GDL_control_flow", "GDL_2d_commands", "GDL_functions"],
+            "modify": ["GDL_parameters", "GDL_control_flow", "GDL_functions"],
+            "debug": ["GDL_common_errors", "GDL_control_flow"],
+            "all": ["GDL_quick_reference", "GDL_control_flow", "GDL_parameters", "GDL_common_errors", "GDL_2d_commands", "GDL_functions"],
+        }
 
     def load(self) -> None:
         """Load all .md files from the knowledge directory."""
@@ -46,6 +57,32 @@ class KnowledgeBase:
                 continue
 
         self._loaded = True
+
+    def get_by_task_type(self, task_type: str) -> str:
+        """
+        Get knowledge documents relevant to task type.
+
+        Args:
+            task_type: One of 'create', 'modify', 'debug', 'all'
+
+        Returns:
+            Concatenated relevant documents.
+        """
+        if not self._loaded:
+            self.load()
+
+        if not self._docs:
+            return ""
+
+        # Get doc names for this task type
+        doc_names = self._layers.get(task_type, self._layers["all"])
+
+        parts = []
+        for name in doc_names:
+            if name in self._docs:
+                parts.append(f"## {name}\n\n{self._docs[name]}")
+
+        return "\n\n---\n\n".join(parts)
 
     def get_all(self) -> str:
         """
