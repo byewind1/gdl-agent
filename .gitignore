@@ -13,3 +13,6 @@ temp/
 config.toml
 output/
 src/
+.qoder/
+knowledge/*.md
+skills/*.md

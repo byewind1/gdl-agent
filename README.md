@@ -1,4 +1,4 @@
-# gdl-agent v0.4
+# gdl-agent v0.4.1
 
 **AI-powered ArchiCAD GDL library object builder — HSF-native.**
 
