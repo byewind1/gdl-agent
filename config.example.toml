@@ -1,0 +1,41 @@
+# gdl-agent Configuration Example
+# Copy this to config.toml and fill in your own API keys and paths
+
+[llm]
+# 选择 LLM 模型 (支持: glm-4-flash, deepseek-reasoner, claude-*, gpt-*)
+model = "glm-4-flash"
+api_key = "YOUR_API_KEY_HERE"
+api_base = "https://open.bigmodel.cn/api/paas/v4"  # 根据模型修改
+temperature = 0.2
+max_tokens = 4096
+
+# 常见 API 端点:
+# GLM (智谱清言):       https://open.bigmodel.cn/api/paas/v4
+# DeepSeek:            https://api.deepseek.com
+# OpenAI:              https://api.openai.com/v1
+# Claude (Anthropic):  需要单独购买 API credits
+
+[agent]
+# Agent 循环参数
+max_iterations = 5      # 最大重试次数
+validate_xml = true     # 验证 XML 格式
+diff_check = true       # 检查变更差异
+auto_version = true     # 自动更新版本号
+
+[compiler]
+# LP_XMLConverter 路径 (ArchiCAD 内置编译器)
+# macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
+# Windows: C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe
+# Linux:   /opt/GRAPHISOFT/ArchiCAD29/LP_XMLConverter
+path = "/path/to/LP_XMLConverter"
+timeout = 60            # 编译超时（秒）
+
+[paths]
+# 工作目录
+knowledge_dir = "./knowledge"   # 知识库文档
+templates_dir = "./templates"   # GDL 模板
+src_dir = "./src"               # 源代码
+output_dir = "./output"         # 编译输出
+
+# 注意: 不要在此文件中提交敏感信息（API keys, 本地路径）
+# Use: git update-index --assume-unchanged config.toml (防止意外提交)
