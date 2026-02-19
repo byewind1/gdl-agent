@@ -111,7 +111,7 @@ with st.sidebar:
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
 
-    model_name = st.selectbox("模型 / Model", [
+    model_options = [
         # ── Anthropic Claude ──
         "claude-haiku-4-5-20251001",       # 最快最便宜
         "claude-sonnet-4-5-20250929",      # 性价比首选
@@ -136,14 +136,13 @@ with st.sidebar:
         "ollama/qwen2.5:14b",
         "ollama/qwen3:8b",
         "ollama/deepseek-coder-v2:16b",
-    ], index=([
-        "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929", "claude-opus-4-5-20250918", "claude-opus-4-6",
-        "glm-4.7", "glm-4.7-flash", "glm-4-plus", "glm-4-flash",
-        "gpt-4o", "gpt-4o-mini", "o3-mini",
-        "deepseek-chat", "deepseek-reasoner",
-        "gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro",
-        "ollama/qwen2.5:14b", "ollama/qwen3:8b", "ollama/deepseek-coder-v2:16b",
-    ].index(_config_defaults.get("llm_model", "glm-4.7")) if _config_defaults.get("llm_model") else 4)  # 默认 glm-4.7
+    ]
+
+    # 从 config 读取默认模型索引
+    default_model = _config_defaults.get("llm_model", "glm-4.7")
+    default_index = model_options.index(default_model) if default_model in model_options else 4
+
+    model_name = st.selectbox("模型 / Model", model_options, index=default_index)
 
     api_key = st.text_input("API Key", value=_config_defaults.get("llm_api_key", ""), type="password", help="Ollama 本地模式不需要 Key")
 
