@@ -65,11 +65,26 @@ if "work_dir" not in st.session_state:
     st.session_state.work_dir = str(Path.home() / "gdl-agent-workspace")
 
 
+# ── Load config.toml defaults ──────────────────────────
+
+_config_defaults = {}
+try:
+    from gdl_agent.config import GDLAgentConfig
+    _config = GDLAgentConfig.load()
+    _config_defaults = {
+        "llm_model": _config.llm.model,
+        "llm_api_key": _config.llm.api_key or "",
+        "llm_api_base": _config.llm.api_base or "",
+        "compiler_path": _config.compiler.path or "",
+    }
+except Exception:
+    pass
+
 # ── Sidebar Config ────────────────────────────────────────
 
 with st.sidebar:
     st.markdown('<p class="main-header">gdl-agent</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">v0.4.0 · HSF-native · AI-powered</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">v0.4.1 · HSF-native · AI-powered</p>', unsafe_allow_html=True)
     st.divider()
 
     st.subheader("📁 工作目录")
@@ -82,13 +97,14 @@ with st.sidebar:
     compiler_mode = st.radio(
         "编译模式",
         ["Mock (无需 ArchiCAD)", "LP_XMLConverter (真实编译)"],
-        index=0,
+        index=1 if _config_defaults.get("compiler_path") else 0,  # 如果有路径，默认选真实编译
     )
 
     converter_path = ""
     if compiler_mode.startswith("LP"):
         converter_path = st.text_input(
             "LP_XMLConverter 路径",
+            value=_config_defaults.get("compiler_path", ""),
             placeholder="/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter",
         )
 
@@ -120,9 +136,16 @@ with st.sidebar:
         "ollama/qwen2.5:14b",
         "ollama/qwen3:8b",
         "ollama/deepseek-coder-v2:16b",
-    ])
+    ], index=([
+        "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929", "claude-opus-4-5-20250918", "claude-opus-4-6",
+        "glm-4.7", "glm-4.7-flash", "glm-4-plus", "glm-4-flash",
+        "gpt-4o", "gpt-4o-mini", "o3-mini",
+        "deepseek-chat", "deepseek-reasoner",
+        "gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro",
+        "ollama/qwen2.5:14b", "ollama/qwen3:8b", "ollama/deepseek-coder-v2:16b",
+    ].index(_config_defaults.get("llm_model", "glm-4.7")) if _config_defaults.get("llm_model") else 4)  # 默认 glm-4.7
 
-    api_key = st.text_input("API Key", type="password", help="Ollama 本地模式不需要 Key")
+    api_key = st.text_input("API Key", value=_config_defaults.get("llm_api_key", ""), type="password", help="Ollama 本地模式不需要 Key")
 
     # API Key guidance
     if "claude" in model_name:
@@ -600,7 +623,7 @@ with tab_log:
 st.divider()
 st.markdown(
     '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
-    'gdl-agent v0.4.0 · HSF-native · '
+    'gdl-agent v0.4.1 · HSF-native · '
     '<a href="https://github.com/byewind/gdl-agent">GitHub</a>'
     '</p>',
     unsafe_allow_html=True,
