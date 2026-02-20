@@ -917,6 +917,17 @@ with col_editor:
 
         # ── 参数 Tab ──────────────────────────────────────
         with tab_params:
+            with st.expander("ℹ️ 参数说明"):
+                st.markdown(
+                    "**参数列表** — GDL 对象的可调参数，对应 ArchiCAD 对象设置面板中的输入项。\n\n"
+                    "- **Type**：数据类型。`Length` 带单位换算，`Integer` 整数，`Boolean` 开关，"
+                    "`Material` 材质选择器，`String` 文字\n"
+                    "- **Name**：代码中引用的变量名，建议英文 camelCase（如 `iShelves`、`bHasBack`）\n"
+                    "- **Value**：默认值，用户未修改时使用\n"
+                    "- **Fixed**：勾选后用户无法在 ArchiCAD 中修改此参数\n\n"
+                    "参数在 3D / 2D / Master 脚本中直接用变量名引用，无需声明。"
+                )
+
             param_data = [
                 {"Type": p.type_tag, "Name": p.name, "Value": p.value,
                  "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
@@ -959,8 +970,58 @@ with col_editor:
                 st.code(build_paramlist_xml(proj_now.parameters), language="xml")
 
         # ── Script Tabs ───────────────────────────────────
+        _SCRIPT_HELP = {
+            "scripts/3d.gdl": (
+                "**3D 脚本** — 三维几何体定义，ArchiCAD 3D 窗口中显示的实体。\n\n"
+                "- 使用 `PRISM_`、`BLOCK`、`SPHERE`、`CONE`、`REVOLVE` 等命令建模\n"
+                "- `ADD` / `DEL` 管理坐标系变换，必须成对出现\n"
+                "- `FOR` / `NEXT` 循环用于重复构件（如格栅、层板）\n"
+                "- **最后一行必须是 `END`**，否则编译失败\n"
+                "- 参数通过变量名直接引用（如 `A`、`B`、`iShelves`）"
+            ),
+            "scripts/2d.gdl": (
+                "**2D 脚本** — 平面图符号，ArchiCAD 楼层平面图中显示的线条。\n\n"
+                "- **必须包含** `PROJECT2 3, 270, 2`（最简投影）或自定义 2D 线条\n"
+                "- `PROJECT2` 自动将 3D 几何投影为平面，适合大多数对象\n"
+                "- 复杂平面符号可用 `LINE2`、`ARC2`、`POLY2`、`RECT2` 手绘\n"
+                "- 不写或留空会导致平面图中对象不可见"
+            ),
+            "scripts/1d.gdl": (
+                "**Master 脚本** — 主控脚本，所有脚本执行前最先运行。\n\n"
+                "- 用于全局变量初始化、参数联动逻辑、条件判断\n"
+                "- 可引用 `GLOB_` 系列全局变量（如 `GLOB_SCALE`、`GLOB_NORTH`）\n"
+                "- 不直接产生几何，只做数据处理\n"
+                "- 简单对象通常不需要此脚本"
+            ),
+            "scripts/vl.gdl": (
+                "**Param 脚本** — 参数验证脚本，参数值发生变化时触发。\n\n"
+                "- 用于参数范围约束（如宽度不能小于 0）\n"
+                "- 派生参数计算（如根据宽度自动计算格栅间距）\n"
+                "- `LOCK` 语句可锁定参数防止用户修改\n"
+                "- 简单对象通常不需要此脚本"
+            ),
+            "scripts/ui.gdl": (
+                "**UI 脚本** — 自定义参数界面，ArchiCAD 对象设置对话框中的控件布局。\n\n"
+                "- 使用 `UI_INFIELD`、`UI_BUTTON`、`UI_SEPARATOR` 等命令\n"
+                "- 不写则 ArchiCAD 自动生成默认参数列表界面\n"
+                "- 用于需要精细化用户体验的商业构件\n"
+                "- 对一般自用构件可留空"
+            ),
+            "scripts/pr.gdl": (
+                "**Properties 脚本** — BIM 属性输出，定义 IFC 属性集和构件属性。\n\n"
+                "- 用于输出 IFC 合规数据（如房间面积、材质规格）\n"
+                "- `PROPERTY` 语句定义属性名和值\n"
+                "- 与模型算量、能耗分析、施工预算直接挂钩\n"
+                "- 不做 BIM 数据输出可留空"
+            ),
+        }
+
         for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
             with tab:
+                # Help expander — collapsed by default
+                with st.expander(f"ℹ️ {label} 脚本说明"):
+                    st.markdown(_SCRIPT_HELP.get(fpath, ""))
+
                 current_code = proj_now.get_script(stype) or ""
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
                 has_diff = fpath in diffs
