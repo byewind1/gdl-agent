@@ -559,8 +559,9 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         if not changes:
             return "❌ AI 输出无法解析，请重新描述需求。"
 
-        # Merge into pending_diffs (AI may partially update scripts)
-        st.session_state.pending_diffs.update(changes)
+        # Strip markdown fences AI sometimes leaks, then merge into pending_diffs
+        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
+        st.session_state.pending_diffs.update(cleaned)
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
 
@@ -635,6 +636,16 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _strip_md_fences(code: str) -> str:
+    """Remove markdown code fences (```gdl / ```) that AI sometimes leaks into scripts."""
+    import re as _re
+    # Remove opening fence (```gdl, ```GDL, ```)
+    code = _re.sub(r'^```[a-zA-Z]*\s*\n?', '', code.strip(), flags=_re.MULTILINE)
+    # Remove closing fence
+    code = _re.sub(r'\n?```\s*$', '', code.strip(), flags=_re.MULTILINE)
+    return code.strip()
+
+
 def _extract_gdl_from_chat() -> dict:
     """
     Scan chat history for fenced code blocks containing GDL.
@@ -706,13 +717,49 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
     if add_count != del_count:
         issues.append(f"⚠️ ADD/DEL 不匹配：{add_count} 个 ADD，{del_count} 个 DEL")
 
-    # 3D: must end with END
+    # Markdown fence leak — common when AI generates code in chat
+    if any(l.strip().startswith("```") for l in lines):
+        issues.append("⚠️ 脚本含有 ``` 标记 — AI 格式化残留，请删除所有反引号行")
+
+    # 3D: END / subroutine RETURN check
     if script_type == "3d":
-        last_non_empty = next(
-            (l.strip() for l in reversed(lines) if l.strip()), ""
-        )
-        if not _re.match(r'^END\s*$', last_non_empty, _re.I):
-            issues.append("⚠️ 3D 脚本最后一行必须是 END")
+        # Detect subroutine labels:  "SubName":
+        sub_label_pat = _re.compile(r'^\s*"[^"]+"\s*:')
+        has_subs = any(sub_label_pat.match(l) for l in lines)
+
+        if has_subs:
+            # Main body = lines before first subroutine label
+            main_body = []
+            for l in lines:
+                if sub_label_pat.match(l):
+                    break
+                main_body.append(l)
+            last_main = next((l.strip() for l in reversed(main_body) if l.strip()), "")
+            if not _re.match(r'^END\s*$', last_main, _re.I):
+                issues.append("⚠️ 3D 主体部分（第一个子程序之前）最后一行必须是 END")
+
+            # Each subroutine should end with RETURN (not END)
+            current_sub = None
+            sub_lines: list[str] = []
+            for l in lines:
+                if sub_label_pat.match(l):
+                    if current_sub and sub_lines:
+                        last_sub = next((s.strip() for s in reversed(sub_lines) if s.strip()), "")
+                        if not _re.match(r'^RETURN\s*$', last_sub, _re.I):
+                            issues.append(f"⚠️ 子程序 {current_sub} 末尾应为 RETURN，不是 END")
+                    current_sub = l.strip()
+                    sub_lines = []
+                else:
+                    sub_lines.append(l)
+            # Check last subroutine
+            if current_sub and sub_lines:
+                last_sub = next((s.strip() for s in reversed(sub_lines) if s.strip()), "")
+                if not _re.match(r'^RETURN\s*$', last_sub, _re.I):
+                    issues.append(f"⚠️ 子程序 {current_sub} 末尾应为 RETURN")
+        else:
+            last_non_empty = next((l.strip() for l in reversed(lines) if l.strip()), "")
+            if not _re.match(r'^END\s*$', last_non_empty, _re.I):
+                issues.append("⚠️ 3D 脚本最后一行必须是 END")
 
     # 2D: must have projection
     if script_type == "2d":
