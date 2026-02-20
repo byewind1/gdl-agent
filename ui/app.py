@@ -328,7 +328,8 @@ def _versioned_gsm_path(proj_name: str, work_dir: str) -> str:
 
 _CN_TO_NAME = {
     # 家具
-    "书架": "Bookshelf", "书柜": "Bookcase", "柜子": "Cabinet", "衣柜": "Wardrobe",
+    "书架": "Bookshelf", "书柜": "Bookcase", "柜子": "Cabinet",
+    "衣柜": "Wardrobe", "橱柜": "Kitchen Cabinet", "储物柜": "StorageUnit",
     "桌子": "Table", "桌": "Table", "书桌": "Desk", "餐桌": "DiningTable",
     "椅子": "Chair", "椅": "Chair", "沙发": "Sofa", "床": "Bed",
     "茶几": "CoffeeTable", "电视柜": "TVStand", "鞋柜": "ShoeRack",
@@ -425,33 +426,58 @@ def show_welcome():
 # ── Intent Classification ─────────────────────────────────
 
 _GDL_KEYWORDS = [
-    "创建", "生成", "制作", "做一个", "建一个", "写一个",
-    "修改", "更新", "添加", "删除", "调整", "优化",
-    "书架", "柜子", "窗", "门", "墙", "楼梯", "桌", "椅",
+    # 动作
+    "创建", "生成", "制作", "做一个", "建一个", "写一个", "写个", "写一",
+    "做个", "建个", "来个", "整个", "出一个", "出个",
+    "修改", "更新", "添加", "删除", "调整", "优化", "重写", "补充",
+    # 建筑/家具对象（中文）
+    "书架", "柜子", "衣柜", "橱柜", "储物柜", "鞋柜", "电视柜",
+    "桌子", "桌", "椅子", "椅", "沙发", "床", "茶几", "柜",
+    "窗", "门", "墙", "楼梯", "柱", "梁", "板", "扶手", "栏杆",
+    "屋顶", "天花", "地板", "灯", "管道",
+    # 技术词
     "参数", "parameter", "script", "gdl", "gsm", "hsf",
     "compile", "编译", "build", "create", "make", "add",
-    "3d", "2d", "prism", "block", "sphere",
+    "3d", "2d", "prism", "block", "sphere", "prism_", "body",
+    "project2", "rect2", "poly2",
+]
+
+# Pure chat patterns — greeting / meta questions only
+_CHAT_ONLY_PATTERNS = [
+    r"^(你好|hello|hi|hey|嗨|哈喽)[!！。\s]*$",
+    r"^(谢谢|感谢|thanks)[!！。\s]*$",
+    r"^你(是谁|能做什么|有什么功能)",
+    r"^(怎么|如何|什么是).*(gdl|archicad|hsf|构件)",
 ]
 
 def _is_gdl_intent(text: str) -> bool:
-    """Quick keyword check — if obvious GDL request, skip LLM classification."""
     t = text.lower()
     return any(kw in t for kw in _GDL_KEYWORDS)
 
-def classify_and_extract(text: str, llm) -> tuple:
+def _is_pure_chat(text: str) -> bool:
+    return any(re.search(p, text.strip(), re.IGNORECASE) for p in _CHAT_ONLY_PATTERNS)
+
+def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
     """
     Returns: (intent, obj_name)
-    - intent: via keyword fast-path, LLM only for ambiguous cases
-    - obj_name: dictionary + regex, zero LLM calls
+    When project is already loaded, default to GDL for anything ambiguous.
     """
-    # Name: always from dictionary (instant, no LLM)
     obj_name = _extract_object_name(text)
 
-    # Intent fast-path
+    # Pure greetings / meta questions always → CHAT regardless of project state
+    if _is_pure_chat(text):
+        return ("CHAT", obj_name)
+
+    # Keyword fast-path
     if _is_gdl_intent(text):
         return ("GDL", obj_name)
 
-    # Ambiguous → ask LLM just for GDL/CHAT (one word)
+    # Project loaded: assume user wants to edit — treat ambiguous as GDL
+    if project_loaded:
+        print(f"[classify] project loaded → default GDL for: '{text[:40]}'")
+        return ("GDL", obj_name)
+
+    # No project, ambiguous → ask LLM (one word)
     try:
         resp = llm.generate([
             {
@@ -467,9 +493,8 @@ def classify_and_extract(text: str, llm) -> tuple:
         ], max_tokens=10, temperature=0.1)
 
         raw = resp.content.strip().upper()
-        print(f"[classify] intent raw: '{raw}'")
-        intent = "GDL" if "GDL" in raw else "CHAT"
-        return (intent, obj_name)
+        print(f"[classify] LLM intent: '{raw}'")
+        return ("GDL" if "GDL" in raw else "CHAT", obj_name)
 
     except Exception as e:
         print(f"[classify] exception: {e}")
@@ -477,14 +502,15 @@ def classify_and_extract(text: str, llm) -> tuple:
 
 
 def chat_respond(user_input: str, history: list, llm) -> str:
-    """Simple conversational response without triggering Agent."""
+    """Simple conversational response. Never outputs GDL code — that goes to the editor."""
     system_msg = {
         "role": "system",
         "content": (
-            "你是 gdl-agent 的助手，专注于 ArchiCAD GDL 库构件的创建与编译。"
-            "用户可以和你闲聊，也可以让你创建 GDL 对象。"
-            "闲聊时自然回应，简洁友好；涉及 GDL 创建需求时提醒用户直接描述需求即可开始生成。"
-            "回复使用中文，专业术语保留英文（GDL、HSF、ArchiCAD、paramlist 等）。"
+            "你是 gdl-agent 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
+            "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
+            "如果用户想创建或修改 GDL 对象，告诉他「直接在底部输入框描述需求，AI 会自动生成并填入编辑器」。\n"
+            "不要提及 ArchiCAD 内部操作（如打开 GDL 对象编辑器），因为本工具就是体外的 GDL IDE。\n"
+            "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
         ),
     }
     messages = [system_msg]
@@ -609,6 +635,41 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _extract_gdl_from_chat() -> dict:
+    """
+    Scan chat history for fenced code blocks containing GDL.
+    Returns {script_path: content} ready to merge into pending_diffs.
+    Heuristic type detection: 3D (has BODY/PRISM_/END), 2D (has PROJECT2),
+    Master (has GLOB_ / PARAMETERS keyword), Param (has PARAMETERS section).
+    Multiple blocks → last block wins per type.
+    """
+    import re as _re
+    collected: dict[str, str] = {}
+    code_block_pat = _re.compile(r"```(?:gdl|GDL)?\s*\n(.*?)```", _re.DOTALL)
+
+    for msg in st.session_state.get("chat_history", []):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content", "")
+        for m in code_block_pat.finditer(content):
+            block = m.group(1).strip()
+            if not block:
+                continue
+            # Classify by content heuristics
+            block_up = block.upper()
+            if _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
+                path = "scripts/2d.gdl"
+            elif _re.search(r'\bPARAMETERS\b', block_up):
+                path = "scripts/vl.gdl"
+            elif _re.search(r'\bGLOB_\w+\b', block_up):
+                path = "scripts/1d.gdl"
+            else:
+                path = "scripts/3d.gdl"   # default: 3D
+            collected[path] = block
+
+    return collected
+
+
 def check_gdl_script(content: str, script_type: str = "") -> list:
     """
     Basic GDL syntax check. Returns list of warning strings (empty = OK).
@@ -724,8 +785,8 @@ with col_editor:
         diffs    = st.session_state.pending_diffs  # live reference
 
         # ── Toolbar ───────────────────────────────────────
-        tb_imp, tb_gsm_imp, tb_sep, tb_name, tb_compile, tb_check = st.columns(
-            [1.2, 1.4, 0.2, 2.2, 1.4, 1.2]
+        tb_imp, tb_gsm_imp, tb_extract, tb_name, tb_compile, tb_check = st.columns(
+            [1.2, 1.4, 1.1, 2.0, 1.4, 1.2]
         )
 
         # Import GDL (.gdl / .txt)
@@ -772,6 +833,23 @@ with col_editor:
                         st.error(imp_msg)
             else:
                 st.caption("GSM 导入需 LP 模式")
+
+        # Extract GDL from chat history
+        with tb_extract:
+            n_chat_blocks = sum(
+                1 for m in st.session_state.chat_history
+                if m.get("role") == "assistant" and "```" in m.get("content", "")
+            )
+            btn_label = f"📥 提取({n_chat_blocks})" if n_chat_blocks else "📥 提取"
+            if st.button(btn_label, use_container_width=True,
+                         help="从对话记录中提取 GDL 代码块并填入编辑器 diff 视图"):
+                extracted = _extract_gdl_from_chat()
+                if extracted:
+                    st.session_state.pending_diffs.update(extracted)
+                    st.toast(f"📥 已提取 {len(extracted)} 个脚本", icon="✅")
+                    st.rerun()
+                else:
+                    st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
 
         # GSM output name
         with tb_name:
@@ -999,7 +1077,10 @@ if user_input:
         llm_for_classify = get_llm()
 
         # ── Intent + Name in ONE call ──
-        intent, gdl_obj_name = classify_and_extract(user_input, llm_for_classify)
+        intent, gdl_obj_name = classify_and_extract(
+            user_input, llm_for_classify,
+            project_loaded=bool(st.session_state.project),
+        )
 
         with live_output.container():
             st.chat_message("user").markdown(user_input)
