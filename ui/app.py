@@ -535,46 +535,100 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         return f"❌ **错误**: {str(e)}"
 
 
-def compile_pending(proj: HSFProject, gsm_name: str, changes: dict) -> str:
-    """Apply pending changes to project and compile. Returns status message."""
+def compile_pending(proj: HSFProject, gsm_name: str, changes: dict) -> tuple:
+    """
+    Apply pending changes to project and compile.
+    Returns (success: bool, message: str).
+    Caller clears pending_changes ONLY on success.
+    """
     try:
-        # Apply changes
         from gdl_agent.core import GDLAgent
         agent = GDLAgent(llm=get_llm(), compiler=get_compiler())
         agent._apply_changes(proj, changes)
 
-        # Versioned output path using user-confirmed name
         output_gsm = _versioned_gsm_path(gsm_name, st.session_state.work_dir)
-
-        # Save & compile
         hsf_dir = proj.save_to_disk()
         result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
 
         mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
+        instruction = (st.session_state.pending_changes or {}).get("instruction", "")
+
         if result.success:
             st.session_state.compile_log.append({
-                "project": proj.name,
-                "instruction": st.session_state.pending_changes.get("instruction", ""),
-                "success": True,
-                "attempts": 1,
-                "message": "Success",
+                "project": proj.name, "instruction": instruction,
+                "success": True, "attempts": 1, "message": "Success",
             })
             msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
             if compiler_mode.startswith("Mock"):
                 msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
-            return msg
+            return (True, msg)
         else:
             st.session_state.compile_log.append({
-                "project": proj.name,
-                "instruction": "",
-                "success": False,
-                "attempts": 1,
-                "message": result.stderr,
+                "project": proj.name, "instruction": instruction,
+                "success": False, "attempts": 1, "message": result.stderr,
             })
-            return f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
+            return (False, f"❌ **编译失败**，代码保留可继续修改\n\n```\n{result.stderr[:500]}\n```")
 
     except Exception as e:
-        return f"❌ **错误**: {str(e)}"
+        return (False, f"❌ **错误**: {str(e)}")
+
+
+def check_gdl_script(content: str, script_type: str = "") -> list:
+    """
+    Basic GDL syntax check. Returns list of warning strings (empty = OK).
+    Checks: IF/ENDIF, FOR/NEXT, ADD/DEL balance, END in 3D, PROJECT2 in 2D.
+    """
+    import re as _re
+    issues = []
+    if not content.strip():
+        if script_type == "2d":
+            issues.append("⚠️ 2D 脚本为空，必须至少包含 PROJECT2 3, 270, 2")
+        return issues
+
+    lines = content.splitlines()
+
+    # IF/ENDIF balance (only multi-line IF: IF ... THEN at end of line)
+    if_multi = sum(
+        1 for l in lines
+        if _re.search(r'\bIF\b', l, _re.I)
+        and _re.search(r'\bTHEN\s*$', l.strip(), _re.I)
+    )
+    endif_count = sum(1 for l in lines if _re.match(r'\s*ENDIF\b', l, _re.I))
+    if if_multi != endif_count:
+        issues.append(f"⚠️ IF/ENDIF 不匹配：{if_multi} 个多行 IF，{endif_count} 个 ENDIF")
+
+    # FOR/NEXT balance
+    for_count = sum(1 for l in lines if _re.match(r'\s*FOR\b', l, _re.I))
+    next_count = sum(1 for l in lines if _re.match(r'\s*NEXT\b', l, _re.I))
+    if for_count != next_count:
+        issues.append(f"⚠️ FOR/NEXT 不匹配：{for_count} 个 FOR，{next_count} 个 NEXT")
+
+    # ADD/DEL balance
+    add_count = sum(1 for l in lines if _re.match(r'\s*ADD\b', l, _re.I))
+    del_count = sum(1 for l in lines if _re.match(r'\s*DEL\b', l, _re.I))
+    if add_count != del_count:
+        issues.append(f"⚠️ ADD/DEL 不匹配：{add_count} 个 ADD，{del_count} 个 DEL")
+
+    # 3D: must end with END
+    if script_type == "3d":
+        last_non_empty = next(
+            (l.strip() for l in reversed(lines) if l.strip()), ""
+        )
+        if not _re.match(r'^END\s*$', last_non_empty, _re.I):
+            issues.append("⚠️ 3D 脚本最后一行必须是 END")
+
+    # 2D: must have projection
+    if script_type == "2d":
+        has_proj = any(
+            _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', l, _re.I)
+            for l in lines
+        )
+        if not has_proj:
+            issues.append("⚠️ 2D 脚本缺少平面投影语句（PROJECT2 / RECT2）")
+
+    if not issues:
+        issues = ["✅ 检查通过"]
+    return issues
 
 
 # ══════════════════════════════════════════════════════════
@@ -636,21 +690,35 @@ with col_editor:
             )
             edited_changes[file_path] = edited_content
 
-        col_ok, col_cancel = st.columns([1, 1])
+        col_ok, col_cancel, col_check = st.columns([2, 1, 1])
         with col_ok:
             if st.button("✅ 确认编译", type="primary", use_container_width=True):
-                # Use user-confirmed name & potentially edited code
-                pc["gsm_name"] = confirmed_gsm_name
-                pc["changes"] = edited_changes
                 with st.spinner("编译中..."):
-                    result_msg = compile_pending(proj_now, confirmed_gsm_name, edited_changes)
+                    success, result_msg = compile_pending(proj_now, confirmed_gsm_name, edited_changes)
                 st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
-                st.session_state.pending_changes = None
+                if success:
+                    # Only clear on success — failure keeps code editable
+                    st.session_state.pending_changes = None
+                else:
+                    # Keep pending so user can fix code and retry
+                    st.session_state.pending_changes["changes"] = edited_changes
+                    st.session_state.pending_changes["gsm_name"] = confirmed_gsm_name
+                    st.error(result_msg)
                 st.rerun()
         with col_cancel:
             if st.button("❌ 放弃", use_container_width=True):
                 st.session_state.pending_changes = None
                 st.rerun()
+        with col_check:
+            if st.button("🔍 检查", use_container_width=True):
+                for fp, content in edited_changes.items():
+                    stype = fp.replace("scripts/", "").replace(".gdl", "")
+                    issues = check_gdl_script(content, stype)
+                    for iss in issues:
+                        if iss.startswith("✅"):
+                            st.success(f"{fp}: {iss}")
+                        else:
+                            st.warning(f"{fp}: {iss}")
 
         st.divider()
 
@@ -720,13 +788,44 @@ with col_editor:
                     if new_content != current:
                         proj_now.set_script(stype, new_content)
 
-            if st.button("🔍 验证参数"):
-                issues = validate_paramlist(proj_now.parameters)
-                if issues:
-                    for i in issues:
-                        st.warning(i)
-                else:
-                    st.success("✅ 参数验证通过")
+                    # Per-script check button
+                    script_type_key = fname.replace(".gdl", "")
+                    if st.button(f"🔍 检查 {fname}", key=f"check_{fname}"):
+                        issues = check_gdl_script(new_content, script_type_key)
+                        for iss in issues:
+                            if iss.startswith("✅"):
+                                st.success(iss)
+                            else:
+                                st.warning(iss)
+
+            # Overall param + all-script check
+            st.divider()
+            col_vp, col_va = st.columns([1, 1])
+            with col_vp:
+                if st.button("🔍 验证参数"):
+                    issues = validate_paramlist(proj_now.parameters)
+                    if issues:
+                        for i in issues:
+                            st.warning(i)
+                    else:
+                        st.success("✅ 参数验证通过")
+            with col_va:
+                if st.button("🔍 全部脚本检查"):
+                    all_ok = True
+                    for stype, fname in script_map:
+                        content = proj_now.get_script(stype)
+                        if not content:
+                            continue
+                        skey = fname.replace(".gdl", "")
+                        issues = check_gdl_script(content, skey)
+                        for iss in issues:
+                            if iss.startswith("✅"):
+                                st.success(f"{fname}: {iss}")
+                            else:
+                                st.warning(f"{fname}: {iss}")
+                                all_ok = False
+                    if all_ok:
+                        st.success("✅ 所有脚本检查通过")
 
         # ── Compile Tab ───────────────────────────────────
         with tab_compile:
