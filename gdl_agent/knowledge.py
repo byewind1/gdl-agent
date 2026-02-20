@@ -33,30 +33,63 @@ class KnowledgeBase:
         self._docs: dict[str, str] = {}
         self._loaded = False
 
-        # Define document layers by task type
+        # Pro docs (ccgdl_dev_doc) take priority when available
+        _pro = ["pro_GDL_01_Basics", "pro_GDL_02_Shapes", "pro_GDL_03_Attributes",
+                "pro_GDL_07_Examples"]
+        _pro_debug = ["pro_GDL_04_Debug_Compat"]
+        _pro_adv   = ["pro_GDL_05_Globals_Request", "pro_GDL_06_Macro_UI_Perf"]
+        _free = ["GDL_quick_reference", "GDL_parameters", "GDL_control_flow",
+                 "GDL_2d_commands", "GDL_functions"]
+
         self._layers = {
-            "create": ["GDL_quick_reference", "GDL_parameters", "GDL_control_flow", "GDL_2d_commands", "GDL_functions"],
-            "modify": ["GDL_parameters", "GDL_control_flow", "GDL_functions"],
-            "debug": ["GDL_common_errors", "GDL_control_flow"],
-            "all": ["GDL_quick_reference", "GDL_control_flow", "GDL_parameters", "GDL_common_errors", "GDL_2d_commands", "GDL_functions"],
+            "create": _pro + _free,
+            "modify": _pro + ["GDL_parameters", "GDL_control_flow"],
+            "debug":  _pro_debug + ["GDL_common_errors", "GDL_control_flow"],
+            "all":    _pro + _pro_debug + _pro_adv + _free + ["GDL_common_errors"],
         }
 
     def load(self) -> None:
-        """Load all .md files from the knowledge directory."""
+        """
+        Load knowledge docs from two tiers:
+        - Free:  knowledge/*.md          (public, on GitHub)
+        - Pro:   knowledge/ccgdl_dev_doc/docs/*.md  (gitignored, loaded with 'pro_' prefix)
+        Pro docs override free docs for the same topic when both exist.
+        """
         self._docs.clear()
 
         if not self.knowledge_dir.exists():
             self._loaded = True
             return
 
+        # Free tier: top-level *.md (skip README / index noise)
+        _skip = {"README", "CHANGELOG"}
         for md_file in sorted(self.knowledge_dir.glob("*.md")):
+            if md_file.stem in _skip:
+                continue
             try:
-                content = md_file.read_text(encoding="utf-8")
-                self._docs[md_file.stem] = content
+                self._docs[md_file.stem] = md_file.read_text(encoding="utf-8")
             except Exception:
                 continue
 
+        # Pro tier: ccgdl_dev_doc/docs/*.md  (gitignored — only present locally)
+        pro_dir = self.knowledge_dir / "ccgdl_dev_doc" / "docs"
+        if pro_dir.exists():
+            for md_file in sorted(pro_dir.glob("*.md")):
+                if md_file.stem in _skip:
+                    continue
+                try:
+                    self._docs[f"pro_{md_file.stem}"] = md_file.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+
         self._loaded = True
+
+    @property
+    def has_pro(self) -> bool:
+        """True if pro (ccgdl_dev_doc) docs are loaded."""
+        if not self._loaded:
+            self.load()
+        return any(k.startswith("pro_") for k in self._docs)
 
     def get_by_task_type(self, task_type: str) -> str:
         """
