@@ -415,28 +415,19 @@ def show_welcome():
 
     st.divider()
 
-    st.markdown("#### 或者：导入已有 GDL 文件")
+    st.markdown("#### 或者：导入已有文件")
     uploaded_file = st.file_uploader(
-        "拖入 .gdl 文件开始编辑",
-        type=["gdl", "txt"],
-        help="支持 AI 生成或手写的 GDL 源码",
+        "拖入 .gdl / .txt / .gsm 文件",
+        type=["gdl", "txt", "gsm"],
+        help=".gdl / .txt 直接解析脚本；.gsm 需侧边栏切换为 LP 模式",
         key="welcome_upload",
     )
     if uploaded_file:
-        content = uploaded_file.read().decode("utf-8", errors="replace")
-        name = Path(uploaded_file.name).stem
-        try:
-            project = parse_gdl_source(content, name)
-            project.work_dir = Path(st.session_state.work_dir)
-            project.root = project.work_dir / project.name
-            st.session_state.project = project
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": f"✅ 已导入 `{project.name}` — {len(project.parameters)} 个参数，{len(project.scripts)} 个脚本。可以开始对话修改了。"
-            })
+        ok, msg = _handle_unified_import(uploaded_file)
+        if not ok:
+            st.error(msg)
+        else:
             st.rerun()
-        except Exception as e:
-            st.error(f"❌ 导入失败: {e}")
 
     st.divider()
     st.caption("💡 提示：第一条消息无需创建项目，直接描述需求，AI 会自动初始化。")
@@ -673,6 +664,43 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
+    """
+    Single entry point for importing any GDL-related file.
+    - .gsm           → LP_XMLConverter decompile → HSFProject
+    - .gdl / .txt    → parse_gdl_source text parse → HSFProject
+    Updates session_state.project, pending_gsm_name, editor_version.
+    Returns (success, message).
+    """
+    fname = uploaded_file.name
+    ext   = Path(fname).suffix.lower()
+
+    if ext == ".gsm":
+        if not compiler_mode.startswith("LP"):  # module-level global from sidebar
+            return (False, "❌ GSM 导入需要 LP_XMLConverter 模式，请在侧边栏切换。")
+        with st.spinner("解包 GSM..."):
+            proj, msg = import_gsm(uploaded_file.read(), fname)
+        if not proj:
+            return (False, msg)
+    else:
+        # .gdl / .txt — plain text
+        try:
+            content = uploaded_file.read().decode("utf-8", errors="replace")
+            proj = parse_gdl_source(content, Path(fname).stem)
+        except Exception as e:
+            return (False, f"❌ 导入失败: {e}")
+        msg = f"✅ 已导入 GDL `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
+
+    proj.work_dir = Path(st.session_state.work_dir)
+    proj.root = proj.work_dir / proj.name
+    st.session_state.project = proj
+    st.session_state.pending_diffs = {}
+    st.session_state.pending_gsm_name = proj.name
+    st.session_state.editor_version += 1
+    st.session_state.chat_history.append({"role": "assistant", "content": msg})
+    return (True, msg)
+
+
 def _strip_md_fences(code: str) -> str:
     """Remove markdown code fences (```gdl / ```) that AI sometimes leaks into scripts."""
     import re as _re
@@ -869,56 +897,23 @@ with col_editor:
         proj_now = st.session_state.project
 
         # ── Toolbar ───────────────────────────────────────
-        tb_imp, tb_gsm_imp, tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
-            [1.0, 1.3, 1.0, 0.85, 1.8, 1.3, 1.1]
+        tb_imp, tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
+            [1.8, 1.0, 0.85, 1.8, 1.3, 1.1]
         )
 
-        # 📂 Import GDL (.gdl / .txt) — single script file
+        # 📂 Unified import — gdl / txt / gsm, routed by extension
         with tb_imp:
-            gdl_upload = st.file_uploader(
-                "📂 GDL 脚本", type=["gdl", "txt"],
-                key="toolbar_gdl_upload", help="导入单个 .gdl 脚本文件（解析为对象）"
+            any_upload = st.file_uploader(
+                "📂 导入文件", type=["gdl", "txt", "gsm"],
+                key="toolbar_any_upload",
+                help=".gdl / .txt → 直接解析脚本  |  .gsm → LP_XMLConverter 解包（需 LP 模式）",
             )
-            if gdl_upload:
-                content = gdl_upload.read().decode("utf-8", errors="replace")
-                name = Path(gdl_upload.name).stem
-                try:
-                    imported = parse_gdl_source(content, name)
-                    imported.work_dir = Path(st.session_state.work_dir)
-                    imported.root = imported.work_dir / imported.name
-                    st.session_state.project = imported
-                    st.session_state.pending_diffs = {}
-                    st.session_state.pending_gsm_name = imported.name
-                    st.session_state.editor_version += 1
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": f"✅ 已导入 GDL `{imported.name}` — {len(imported.parameters)} 参数，{len(imported.scripts)} 脚本",
-                    })
+            if any_upload:
+                ok, msg = _handle_unified_import(any_upload)
+                if not ok:
+                    st.error(msg)
+                else:
                     st.rerun()
-                except Exception as e:
-                    st.error(f"导入失败: {e}")
-
-        # 📦 Import GSM — full object package (LP mode only)
-        with tb_gsm_imp:
-            if compiler_mode.startswith("LP"):
-                gsm_upload = st.file_uploader(
-                    "📦 GSM 对象", type=["gsm"],
-                    key="toolbar_gsm_upload", help="导入 ArchiCAD .gsm 对象包，需 LP_XMLConverter"
-                )
-                if gsm_upload:
-                    with st.spinner("解包 GSM..."):
-                        proj_imp, imp_msg = import_gsm(gsm_upload.read(), gsm_upload.name)
-                    if proj_imp:
-                        st.session_state.project = proj_imp
-                        st.session_state.pending_diffs = {}
-                        st.session_state.pending_gsm_name = proj_imp.name
-                        st.session_state.editor_version += 1
-                        st.session_state.chat_history.append({"role": "assistant", "content": imp_msg})
-                        st.rerun()
-                    else:
-                        st.error(imp_msg)
-            else:
-                st.caption("GSM 导入\n需 LP 模式")
 
         # 📥 Extract GDL code blocks from chat history → apply directly
         with tb_extract:
