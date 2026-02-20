@@ -184,7 +184,7 @@ with st.sidebar:
         converter_path = st.text_input(
             "LP_XMLConverter 路径",
             value=_config_defaults.get("compiler_path", ""),
-            placeholder="/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter",
+            placeholder="/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter",
         )
 
     st.divider()
@@ -550,19 +550,36 @@ _SCRIPT_MAP = [
 
 # ── Run Agent ─────────────────────────────────────────────
 
+# Keywords that signal debug/analysis intent → inject all scripts + allow plain-text reply
+_DEBUG_KEYWORDS = {
+    "debug", "fix", "error", "bug", "wrong", "issue", "broken", "fail", "crash",
+    "问题", "错误", "调试", "检查", "分析", "为什么", "帮我看", "看看", "出错",
+    "不对", "不行", "哪里", "原因", "解释", "explain", "why", "what", "how",
+    "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
+}
+
+def _is_debug_intent(text: str) -> bool:
+    t = text.lower()
+    return any(kw in t for kw in _DEBUG_KEYWORDS)
+
+
 def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: str = None) -> str:
     """
-    Generate code only (no compile).
-    Directly applies AI output to project scripts — no confirmation needed.
+    Unified chat+generate entry point.
+    - Debug/analysis intent  → all scripts in context, LLM may reply with plain text OR [FILE:] fixes
+    - Generation intent      → affected scripts only, LLM writes [FILE:] code blocks
+    Always applies [FILE:] code blocks if present; shows plain-text analysis in chat if not.
     """
     status_ph = status_col.empty()
+    debug_mode = _is_debug_intent(user_input)
 
     def on_event(event_type, data):
         if event_type == "analyze":
             scripts = data.get("affected_scripts", [])
-            status_ph.info(f"🔍 分析中... 影响脚本: {', '.join(scripts)}")
+            mode_tag = " [全脚本]" if debug_mode else ""
+            status_ph.info(f"🔍 分析中{mode_tag}... 脚本: {', '.join(scripts)}")
         elif event_type == "attempt":
-            status_ph.info("🧠 调用 AI 生成代码...")
+            status_ph.info("🧠 调用 AI...")
         elif event_type == "llm_response":
             status_ph.info(f"✏️ 收到 {data['length']} 字符，解析中...")
 
@@ -571,35 +588,49 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         knowledge = load_knowledge()
         skills_text = load_skills().get_for_task(user_input)
 
+        # Pass recent chat history for multi-turn context (last 6 messages, skip heavy code blocks)
+        recent_history = [
+            m for m in st.session_state.chat_history[-8:]
+            if m["role"] in ("user", "assistant")
+        ]
+
         agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
-        changes = agent.generate_only(
+        changes, plain_text = agent.generate_only(
             instruction=user_input, project=proj,
             knowledge=knowledge, skills=skills_text,
+            include_all_scripts=debug_mode,
+            history=recent_history,
         )
         status_ph.empty()
 
-        if not changes:
-            return "❌ AI 输出无法解析，请重新描述需求。"
+        reply_parts = []
 
-        # Strip markdown fences, then directly apply to project scripts
-        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
-        _apply_scripts_to_project(proj, cleaned)
-        st.session_state.editor_version += 1  # force text_area widget refresh
-        if gsm_name:
-            st.session_state.pending_gsm_name = gsm_name
+        # Plain-text analysis from LLM (debug/explanation)
+        if plain_text:
+            reply_parts.append(plain_text)
 
-        script_names = ", ".join(
-            p.replace("scripts/", "").replace(".gdl", "").upper()
-            for p in cleaned.keys()
-            if p.startswith("scripts/")
-        )
-        # Build full code display for chat — user can read/verify before compiling
-        code_blocks = []
-        for fpath, code in cleaned.items():
-            lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
-            code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
-        code_display = "\n\n".join(code_blocks)
-        return f"✏️ **已写入脚本 [{script_names}]** — 可直接「🔧 编译」\n\n{code_display}"
+        # Code changes — strip fences, apply, show in chat
+        if changes:
+            cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
+            _apply_scripts_to_project(proj, cleaned)
+            st.session_state.editor_version += 1
+            if gsm_name:
+                st.session_state.pending_gsm_name = gsm_name
+
+            script_names = ", ".join(
+                p.replace("scripts/", "").replace(".gdl", "").upper()
+                for p in cleaned if p.startswith("scripts/")
+            )
+            code_blocks = []
+            for fpath, code in cleaned.items():
+                lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
+                code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
+            reply_parts.append(f"✏️ **已写入脚本 [{script_names}]** — 可直接「🔧 编译」\n\n" + "\n\n".join(code_blocks))
+
+        if reply_parts:
+            return "\n\n---\n\n".join(reply_parts)
+
+        return "🤔 AI 未返回代码或分析，请换一种描述方式。"
 
     except Exception as e:
         status_ph.empty()
@@ -645,27 +676,99 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
 
 def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
     """
-    Decompile GSM → HSF → HSFProject.
+    Decompile GSM → HSF → HSFProject via LP_XMLConverter libpart2hsf.
     Returns (project | None, message).
     """
     import tempfile, shutil
+    compiler = get_compiler()
+
+    # Guard: must have a real compiler
+    if isinstance(compiler, MockHSFCompiler):
+        return (None, "❌ GSM 导入需要 LP_XMLConverter，Mock 模式不支持。请在侧边栏选择 LP 模式并指定路径。")
+
+    # Diagnostic: report which binary will be used
+    bin_path = compiler.converter_path or "(未检测到)"
+    if not compiler.is_available:
+        return (
+            None,
+            f"❌ LP_XMLConverter 未找到\n\n"
+            f"检测路径: `{bin_path}`\n\n"
+            f"macOS 正确路径示例:\n"
+            f"`/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter`\n\n"
+            f"请在侧边栏手动填写正确路径。"
+        )
+
     tmp = Path(tempfile.mkdtemp())
     gsm_path = tmp / filename
     gsm_path.write_bytes(gsm_bytes)
     hsf_out = tmp / "hsf_out"
     hsf_out.mkdir()
-    result = get_compiler().libpart2hsf(str(gsm_path), str(hsf_out))
+
+    result = compiler.libpart2hsf(str(gsm_path), str(hsf_out))
+
     if not result.success:
+        # Show full diagnostics so user can debug
+        diag = result.stderr or result.stdout or "(无输出)"
         shutil.rmtree(tmp, ignore_errors=True)
-        return (None, f"❌ GSM 解包失败: {result.stderr}")
+        return (
+            None,
+            f"❌ GSM 解包失败 (exit={result.exit_code})\n\n"
+            f"**Binary**: `{bin_path}`\n\n"
+            f"**输出**:\n```\n{diag[:800]}\n```"
+        )
+
     try:
-        # LP_XMLConverter creates a subdirectory named after the object
-        subdirs = [d for d in hsf_out.iterdir() if d.is_dir()]
-        hsf_dir = subdirs[0] if subdirs else hsf_out
-        proj = HSFProject.from_hsf(str(hsf_dir))
+        # Locate true HSF root — LP_XMLConverter output layout varies by AC version:
+        #   AC 27/28 (standard): hsf_out/<LIBPARTNAME>/libpartdata.xml + scripts/
+        #   AC 29 (flat):        hsf_out/libpartdata.xml + scripts/  (no named subdir)
+        def _find_hsf_root(base: Path) -> Path:
+            # 1. base itself has libpartdata.xml → it IS the HSF root
+            if (base / "libpartdata.xml").exists():
+                return base
+            # 2. base itself has a scripts/ subdir → treat base as root
+            if (base / "scripts").is_dir():
+                return base
+            # 3. one named subdir with libpartdata.xml → standard layout
+            for d in sorted(base.iterdir()):
+                if d.is_dir() and (d / "libpartdata.xml").exists():
+                    return d
+            # 4. one named subdir with scripts/ → standard layout without metadata
+            for d in sorted(base.iterdir()):
+                if d.is_dir() and (d / "scripts").is_dir():
+                    return d
+            # 5. last resort: first subdir (or base itself)
+            subdirs = [d for d in base.iterdir() if d.is_dir()]
+            return subdirs[0] if subdirs else base
+
+        hsf_dir = _find_hsf_root(hsf_out)
+
+        if not hsf_dir.exists():
+            contents = list(hsf_out.iterdir())
+            shutil.rmtree(tmp, ignore_errors=True)
+            return (
+                None,
+                f"❌ 无法定位 HSF 根目录\n\n"
+                f"hsf_out 内容: `{[str(c.name) for c in contents]}`\n\n"
+                f"stdout: {result.stdout[:300]}\nstderr: {result.stderr[:300]}"
+            )
+
+        # Snapshot directory tree before rmtree wipes it
+        hsf_files = sorted(str(p.relative_to(hsf_dir)) for p in hsf_dir.rglob("*") if p.is_file())
+
+        proj = HSFProject.load_from_disk(str(hsf_dir))
+        # AC29 flat layout: hsf_dir == hsf_out → name is "hsf_out", use GSM stem instead
+        gsm_stem = Path(filename).stem
+        if proj.name in ("hsf_out", "scripts", ""):
+            proj.name = gsm_stem
         proj.work_dir = Path(st.session_state.work_dir)
         proj.root = proj.work_dir / proj.name
-        return (proj, f"✅ 已导入 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本")
+
+        scripts_found = [s.value for s in proj.scripts]
+        diag = (
+            f"\n\n**HSF 文件列表**: `{hsf_files}`"
+            f"\n**已识别脚本**: `{scripts_found}`"
+        )
+        return (proj, f"✅ 已导入 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本{diag}")
     except Exception as e:
         return (None, f"❌ HSF 解析失败: {e}")
     finally:
@@ -684,8 +787,6 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     ext   = Path(fname).suffix.lower()
 
     if ext == ".gsm":
-        if not compiler_mode.startswith("LP"):  # module-level global from sidebar
-            return (False, "❌ GSM 导入需要 LP_XMLConverter 模式，请在侧边栏切换。")
         with st.spinner("解包 GSM..."):
             proj, msg = import_gsm(uploaded_file.read(), fname)
         if not proj:

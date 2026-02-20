@@ -161,6 +161,17 @@ class HSFCompiler:
             base = Path("/Applications/GRAPHISOFT")
             if base.exists():
                 for ac_dir in sorted(base.iterdir(), reverse=True):
+                    # AC 29+: LP_XMLConverter is bundled INSIDE Archicad.app
+                    # e.g. Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
+                    for app_bundle in sorted(ac_dir.glob("*.app"), reverse=True):
+                        converter = app_bundle / "Contents" / "MacOS" / "LP_XMLConverter.app" / "Contents" / "MacOS" / "LP_XMLConverter"
+                        if converter.exists():
+                            return str(converter)
+                    # Older layout: sibling .app bundle at ac_dir level
+                    converter = ac_dir / "LP_XMLConverter.app" / "Contents" / "MacOS" / "LP_XMLConverter"
+                    if converter.exists():
+                        return str(converter)
+                    # Fallback: plain binary
                     converter = ac_dir / "LP_XMLConverter"
                     if converter.exists():
                         return str(converter)
