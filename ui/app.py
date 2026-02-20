@@ -295,19 +295,33 @@ def get_llm():
     return LLMAdapter(config)
 
 def load_knowledge(task_type: str = "all"):
-    kb_dir = Path(st.session_state.work_dir) / "knowledge"
-    if not kb_dir.exists():
-        kb_dir = Path(__file__).parent.parent / "knowledge"
-    kb = KnowledgeBase(str(kb_dir))
+    # Always load from project knowledge dir first (contains pro ccgdl_dev_doc)
+    project_kb = Path(__file__).parent.parent / "knowledge"
+    kb = KnowledgeBase(str(project_kb))
     kb.load()
+
+    # Merge user's custom knowledge from work_dir (if different & exists)
+    user_kb_dir = Path(st.session_state.work_dir) / "knowledge"
+    if user_kb_dir.exists() and user_kb_dir != project_kb:
+        user_kb = KnowledgeBase(str(user_kb_dir))
+        user_kb.load()
+        kb._docs.update(user_kb._docs)   # user custom overrides project
+
     return kb.get_by_task_type(task_type)
 
 def load_skills():
-    sk_dir = Path(st.session_state.work_dir) / "skills"
-    if not sk_dir.exists():
-        sk_dir = Path(__file__).parent.parent / "skills"
-    sl = SkillsLoader(str(sk_dir))
+    # Always load from project skills dir first
+    project_sk = Path(__file__).parent.parent / "skills"
+    sl = SkillsLoader(str(project_sk))
     sl.load()
+
+    # Merge user's custom skills from work_dir
+    user_sk_dir = Path(st.session_state.work_dir) / "skills"
+    if user_sk_dir.exists() and user_sk_dir != project_sk:
+        user_sl = SkillsLoader(str(user_sk_dir))
+        user_sl.load()
+        sl._skills.update(user_sl._skills)   # user custom overrides project
+
     return sl
 
 def _versioned_gsm_path(proj_name: str, work_dir: str) -> str:
