@@ -48,11 +48,20 @@ class LLMAdapter:
 
             self._litellm = litellm
 
-            # Set API key if available
+            # Set API key env vars by provider so litellm can find them
             api_key = self.config.resolve_api_key()
             if api_key:
-                # litellm reads from env, but we can also pass directly
-                os.environ.setdefault("OPENAI_API_KEY", api_key)
+                model_lower = self.config.model.lower()
+                if "glm" in model_lower:
+                    os.environ["ZAI_API_KEY"] = api_key
+                elif "deepseek" in model_lower:
+                    os.environ["DEEPSEEK_API_KEY"] = api_key
+                elif "claude" in model_lower:
+                    os.environ["ANTHROPIC_API_KEY"] = api_key
+                elif "gemini" in model_lower:
+                    os.environ["GEMINI_API_KEY"] = api_key
+                else:
+                    os.environ.setdefault("OPENAI_API_KEY", api_key)
 
             # Set custom base URL if provided
             if self.config.api_base:
@@ -103,7 +112,11 @@ class LLMAdapter:
         api_key = self.config.resolve_api_key()
         if api_key:
             completion_kwargs["api_key"] = api_key
-        if self.config.api_base:
+        # Skip api_base for native LiteLLM providers (zai/, deepseek/, etc.)
+        # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
+        native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
+        is_native = any(model.startswith(p) for p in native_providers)
+        if self.config.api_base and not is_native:
             completion_kwargs["api_base"] = self.config.api_base
 
         completion_kwargs.update(kwargs)
@@ -135,14 +148,18 @@ class LLMAdapter:
         # Infer provider from model name
         model_lower = model.lower()
         if "glm" in model_lower:
-            # 智谱 GLM models via OpenAI-compatible endpoint
-            return model  # litellm handles this with api_base
+            # 智谱 GLM models: LiteLLM provider prefix is 'zai/' (Z.AI)
+            return f"zai/{model}"
         elif "claude" in model_lower:
-            return model
+            return f"claude/{model}" if "claude/" not in model else model
         elif "deepseek" in model_lower:
             return f"deepseek/{model}"
         elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
-            return model
+            return f"openai/{model}"
+        elif "gemini" in model_lower:
+            return f"gemini/{model}" if "gemini/" not in model else model
+        elif "ollama" in model_lower:
+            return model  # Already has ollama/ prefix or will be handled
 
         return model
 
