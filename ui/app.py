@@ -591,7 +591,13 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
             for p in cleaned.keys()
             if p.startswith("scripts/")
         )
-        return f"✏️ **AI 已写入脚本** [{script_names}]，点击「🔧 编译」即可。"
+        # Build full code display for chat — user can read/verify before compiling
+        code_blocks = []
+        for fpath, code in cleaned.items():
+            lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
+            code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
+        code_display = "\n\n".join(code_blocks)
+        return f"✏️ **已写入脚本 [{script_names}]** — 可直接「🔧 编译」\n\n{code_display}"
 
     except Exception as e:
         status_ph.empty()
@@ -853,77 +859,81 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
 # ══════════════════════════════════════════════════════════
 #  Main Layout: Left Chat | Right Editor
 # ══════════════════════════════════════════════════════════
+#  Layout: Editor (left/main) | AI Chat (right sidebar)
+# ══════════════════════════════════════════════════════════
 
-col_chat, col_editor = st.columns([2, 3], gap="large")
-
-
-# ── Left: Chat History ────────────────────────────────────
-
-with col_chat:
-    if not st.session_state.project:
-        st.markdown("### 💬 开始创建")
-        st.markdown(
-            '<p style="color:#64748b; font-size:0.9rem;">在底部输入框描述你想创建的对象，AI 会自动生成并编译。</p>',
-            unsafe_allow_html=True,
-        )
-    else:
-        proj_now = st.session_state.project
-        st.markdown(f"### 💬 {proj_now.name}")
-        st.caption(f"参数: {len(proj_now.parameters)} | 脚本: {len(proj_now.scripts)}")
-
-    # Chat history
-    for msg in st.session_state.chat_history:
-        st.chat_message(msg["role"]).markdown(msg["content"])
-
-    # Placeholder for live agent output (populated when agent runs)
-    live_output = st.empty()
+col_editor, col_chat = st.columns([3, 2], gap="medium")
 
 
-# ── Right: Editor ─────────────────────────────────────────
+# ── Left: Code Editor (always visible) ───────────────────
 
-def _diff_summary(old: str, new: str) -> str:
-    """Return a short +N/-N line diff summary."""
-    old_lines = set(old.splitlines())
-    new_lines = set(new.splitlines())
-    added   = len(new_lines - old_lines)
-    removed = len(old_lines - new_lines)
-    return f"+{added} / -{removed} lines"
-
+_SCRIPT_HELP = {
+    "scripts/3d.gdl": (
+        "**3D 脚本** — 三维几何体定义，ArchiCAD 3D 窗口中显示的实体。\n\n"
+        "- 使用 `PRISM_`、`BLOCK`、`SPHERE`、`CONE`、`REVOLVE` 等命令建模\n"
+        "- `ADD` / `DEL` 管理坐标系变换，必须成对出现\n"
+        "- `FOR` / `NEXT` 循环用于重复构件（如格栅、层板）\n"
+        "- **最后一行必须是 `END`**，否则编译失败"
+    ),
+    "scripts/2d.gdl": (
+        "**2D 脚本** — 平面图符号，ArchiCAD 楼层平面图中显示的线条。\n\n"
+        "- **必须包含** `PROJECT2 3, 270, 2`（最简投影）或自定义 2D 线条\n"
+        "- 不写或留空会导致平面图中对象不可见"
+    ),
+    "scripts/1d.gdl": (
+        "**Master 脚本** — 主控脚本，所有脚本执行前最先运行。\n\n"
+        "- 全局变量初始化、参数联动逻辑\n"
+        "- 简单对象通常不需要此脚本"
+    ),
+    "scripts/vl.gdl": (
+        "**Param 脚本** — 参数验证脚本，参数值变化时触发。\n\n"
+        "- 参数范围约束、派生参数计算\n"
+        "- 简单对象通常不需要此脚本"
+    ),
+    "scripts/ui.gdl": (
+        "**UI 脚本** — 自定义参数界面，ArchiCAD 对象设置对话框控件布局。\n\n"
+        "- 不写则 ArchiCAD 自动生成默认参数列表界面"
+    ),
+    "scripts/pr.gdl": (
+        "**Properties 脚本** — BIM 属性输出，定义 IFC 属性集和构件属性。\n\n"
+        "- 不做 BIM 数据输出可留空"
+    ),
+}
 
 with col_editor:
-    if not st.session_state.project:
-        show_welcome()
-    else:
-        proj_now = st.session_state.project
+    proj_now = st.session_state.project
+    _ev      = st.session_state.editor_version
 
-        # ── Toolbar ───────────────────────────────────────
-        tb_imp, tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
-            [1.8, 1.0, 0.85, 1.8, 1.3, 1.1]
+    # ── Import button — always visible at top ─────────────
+    any_upload = st.file_uploader(
+        "📂 导入文件 (gdl / txt / gsm)", type=["gdl", "txt", "gsm"],
+        key="editor_import",
+        help=".gdl / .txt → 直接解析脚本  |  .gsm → LP_XMLConverter 解包（需 LP 模式）",
+    )
+    if any_upload:
+        ok, _imp_msg = _handle_unified_import(any_upload)
+        if not ok:
+            st.error(_imp_msg)
+        else:
+            st.rerun()
+
+    if not proj_now:
+        st.info("📂 导入 .gdl / .gsm 文件，或在右侧 AI 对话框中描述需求，AI 将自动创建 GDL 对象。")
+
+    else:
+        # ── Toolbar (project-specific actions) ────────────
+        tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
+            [1.0, 0.85, 2.0, 1.3, 1.1]
         )
 
-        # 📂 Unified import — gdl / txt / gsm, routed by extension
-        with tb_imp:
-            any_upload = st.file_uploader(
-                "📂 导入文件", type=["gdl", "txt", "gsm"],
-                key="toolbar_any_upload",
-                help=".gdl / .txt → 直接解析脚本  |  .gsm → LP_XMLConverter 解包（需 LP 模式）",
-            )
-            if any_upload:
-                ok, msg = _handle_unified_import(any_upload)
-                if not ok:
-                    st.error(msg)
-                else:
-                    st.rerun()
-
-        # 📥 Extract GDL code blocks from chat history → apply directly
         with tb_extract:
-            n_chat_blocks = sum(
+            n_blocks = sum(
                 1 for m in st.session_state.chat_history
                 if m.get("role") == "assistant" and "```" in m.get("content", "")
             )
-            btn_label = f"📥 提取({n_chat_blocks})" if n_chat_blocks else "📥 提取"
-            if st.button(btn_label, use_container_width=True,
-                         help="从对话记录中提取 GDL 代码块，直接写入对应脚本"):
+            lbl = f"📥 提取({n_blocks})" if n_blocks else "📥 提取"
+            if st.button(lbl, use_container_width=True,
+                         help="从 AI 对话中提取 GDL 代码块写入编辑器"):
                 extracted = _extract_gdl_from_chat()
                 if extracted:
                     _apply_scripts_to_project(proj_now, extracted)
@@ -933,16 +943,14 @@ with col_editor:
                 else:
                     st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
 
-        # 🗑️ Clear all scripts
         with tb_clear:
             if st.button("🗑️ 清空", use_container_width=True,
-                         help="清空所有脚本代码，等待重新导入或 AI 生成"):
+                         help="清空所有脚本代码"):
                 st.session_state.confirm_clear = True
 
-        # GSM output name
         with tb_name:
             gsm_name_input = st.text_input(
-                "输出名称", label_visibility="collapsed",
+                "输出 GSM 名称", label_visibility="collapsed",
                 value=st.session_state.pending_gsm_name or proj_now.name,
                 placeholder="输出 GSM 名称",
                 key="toolbar_gsm_name",
@@ -950,7 +958,6 @@ with col_editor:
             )
             st.session_state.pending_gsm_name = gsm_name_input
 
-        # Compile button
         with tb_compile:
             if st.button("🔧 编译", type="primary", use_container_width=True,
                          help="编译当前所有脚本为 .gsm 对象"):
@@ -967,7 +974,6 @@ with col_editor:
                     st.error(result_msg)
                 st.rerun()
 
-        # Global syntax check
         with tb_check:
             if st.button("🔍 全检查", use_container_width=True):
                 all_ok = True
@@ -985,7 +991,7 @@ with col_editor:
                 if all_ok:
                     st.success("✅ 所有脚本语法正常")
 
-        # ── 清空确认 ─────────────────────────────────────
+        # ── 清空确认 ──────────────────────────────────────
         if st.session_state.get("confirm_clear"):
             st.warning("⚠️ 将清空所有脚本代码，此操作不可撤销。确认继续？")
             cc1, cc2, _ = st.columns([1, 1, 4])
@@ -995,6 +1001,7 @@ with col_editor:
                         proj_now.set_script(stype, "")
                     st.session_state.confirm_clear = False
                     st.session_state.editor_version += 1
+                    _ev = st.session_state.editor_version
                     st.toast("🗑️ 已清空所有脚本", icon="✅")
                     st.rerun()
             with cc2:
@@ -1004,30 +1011,21 @@ with col_editor:
 
         st.divider()
 
-        # ── Tab strip ─────────────────────────────────────
-        tab_labels = (
-            ["参数"]
-            + [label for _, _fp, label in _SCRIPT_MAP]
-            + ["📋 日志"]
-        )
-        all_tabs = st.tabs(tab_labels)
-        tab_params = all_tabs[0]
-        script_tabs = all_tabs[1:-1]
-        tab_log = all_tabs[-1]
+        # ── Script / Param Tabs ────────────────────────────
+        tab_labels = ["参数"] + [lbl for _, _, lbl in _SCRIPT_MAP] + ["📋 日志"]
+        all_tabs   = st.tabs(tab_labels)
+        tab_params, *script_tabs, tab_log = all_tabs
 
-        # ── 参数 Tab ──────────────────────────────────────
+        # Params tab
         with tab_params:
             with st.expander("ℹ️ 参数说明"):
                 st.markdown(
-                    "**参数列表** — GDL 对象的可调参数，对应 ArchiCAD 对象设置面板中的输入项。\n\n"
-                    "- **Type**：数据类型。`Length` 带单位换算，`Integer` 整数，`Boolean` 开关，"
-                    "`Material` 材质选择器，`String` 文字\n"
-                    "- **Name**：代码中引用的变量名，建议英文 camelCase（如 `iShelves`、`bHasBack`）\n"
-                    "- **Value**：默认值，用户未修改时使用\n"
-                    "- **Fixed**：勾选后用户无法在 ArchiCAD 中修改此参数\n\n"
-                    "参数在 3D / 2D / Master 脚本中直接用变量名引用，无需声明。"
+                    "**参数列表** — GDL 对象的可调参数。\n\n"
+                    "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
+                    "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
+                    "- **Value**: 默认值\n"
+                    "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
                 )
-
             param_data = [
                 {"Type": p.type_tag, "Name": p.name, "Value": p.value,
                  "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
@@ -1036,7 +1034,7 @@ with col_editor:
             if param_data:
                 st.dataframe(param_data, use_container_width=True, hide_index=True)
             else:
-                st.caption("暂无参数，通过对话让 AI 添加，或手动添加。")
+                st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
 
             with st.expander("➕ 手动添加参数"):
                 pc1, pc2, pc3, pc4 = st.columns(4)
@@ -1069,79 +1067,25 @@ with col_editor:
             with st.expander("paramlist.xml 预览"):
                 st.code(build_paramlist_xml(proj_now.parameters), language="xml")
 
-        # ── Script Tabs ───────────────────────────────────
-        _SCRIPT_HELP = {
-            "scripts/3d.gdl": (
-                "**3D 脚本** — 三维几何体定义，ArchiCAD 3D 窗口中显示的实体。\n\n"
-                "- 使用 `PRISM_`、`BLOCK`、`SPHERE`、`CONE`、`REVOLVE` 等命令建模\n"
-                "- `ADD` / `DEL` 管理坐标系变换，必须成对出现\n"
-                "- `FOR` / `NEXT` 循环用于重复构件（如格栅、层板）\n"
-                "- **最后一行必须是 `END`**，否则编译失败\n"
-                "- 参数通过变量名直接引用（如 `A`、`B`、`iShelves`）"
-            ),
-            "scripts/2d.gdl": (
-                "**2D 脚本** — 平面图符号，ArchiCAD 楼层平面图中显示的线条。\n\n"
-                "- **必须包含** `PROJECT2 3, 270, 2`（最简投影）或自定义 2D 线条\n"
-                "- `PROJECT2` 自动将 3D 几何投影为平面，适合大多数对象\n"
-                "- 复杂平面符号可用 `LINE2`、`ARC2`、`POLY2`、`RECT2` 手绘\n"
-                "- 不写或留空会导致平面图中对象不可见"
-            ),
-            "scripts/1d.gdl": (
-                "**Master 脚本** — 主控脚本，所有脚本执行前最先运行。\n\n"
-                "- 用于全局变量初始化、参数联动逻辑、条件判断\n"
-                "- 可引用 `GLOB_` 系列全局变量（如 `GLOB_SCALE`、`GLOB_NORTH`）\n"
-                "- 不直接产生几何，只做数据处理\n"
-                "- 简单对象通常不需要此脚本"
-            ),
-            "scripts/vl.gdl": (
-                "**Param 脚本** — 参数验证脚本，参数值发生变化时触发。\n\n"
-                "- 用于参数范围约束（如宽度不能小于 0）\n"
-                "- 派生参数计算（如根据宽度自动计算格栅间距）\n"
-                "- `LOCK` 语句可锁定参数防止用户修改\n"
-                "- 简单对象通常不需要此脚本"
-            ),
-            "scripts/ui.gdl": (
-                "**UI 脚本** — 自定义参数界面，ArchiCAD 对象设置对话框中的控件布局。\n\n"
-                "- 使用 `UI_INFIELD`、`UI_BUTTON`、`UI_SEPARATOR` 等命令\n"
-                "- 不写则 ArchiCAD 自动生成默认参数列表界面\n"
-                "- 用于需要精细化用户体验的商业构件\n"
-                "- 对一般自用构件可留空"
-            ),
-            "scripts/pr.gdl": (
-                "**Properties 脚本** — BIM 属性输出，定义 IFC 属性集和构件属性。\n\n"
-                "- 用于输出 IFC 合规数据（如房间面积、材质规格）\n"
-                "- `PROPERTY` 语句定义属性名和值\n"
-                "- 与模型算量、能耗分析、施工预算直接挂钩\n"
-                "- 不做 BIM 数据输出可留空"
-            ),
-        }
-
+        # Script tabs
         for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
             with tab:
-                # Help expander — collapsed by default
                 with st.expander(f"ℹ️ {label} 脚本说明"):
                     st.markdown(_SCRIPT_HELP.get(fpath, ""))
 
                 current_code = proj_now.get_script(stype) or ""
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
-
-                # ── Single editor (AI writes directly, no diff confirm needed) ──
-                _ev = st.session_state.editor_version
                 new_code = st.text_area(
-                    label, value=current_code, height=400,
+                    label, value=current_code, height=420,
                     key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
                 )
                 if new_code != current_code:
                     proj_now.set_script(stype, new_code)
-
-                if st.button(f"🔍 检查", key=f"chk_{fpath}_v{_ev}"):
+                if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
                     for iss in check_gdl_script(new_code, skey):
-                        if iss.startswith("✅"):
-                            st.success(iss)
-                        else:
-                            st.warning(iss)
+                        st.success(iss) if iss.startswith("✅") else st.warning(iss)
 
-        # ── 日志 Tab ──────────────────────────────────────
+        # Log tab
         with tab_log:
             if not st.session_state.compile_log:
                 st.info("暂无编译记录")
@@ -1154,7 +1098,6 @@ with col_editor:
             if st.button("清除日志"):
                 st.session_state.compile_log = []
                 st.rerun()
-
             with st.expander("HSF 目录结构"):
                 tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
                         "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
@@ -1165,27 +1108,43 @@ with col_editor:
                 st.code("\n".join(tree), language="text")
 
 
-# ══════════════════════════════════════════════════════════
-#  Chat Input — Always at Bottom
-# ══════════════════════════════════════════════════════════
+# ── Right: AI Chat panel ──────────────────────────────────
 
-user_input = st.chat_input(
-    "描述你想创建或修改的 GDL 对象，如「创建一个宽 600mm 的书架，iShelves 控制层数」"
-)
+with col_chat:
+    _chat_proj = st.session_state.project
+    if _chat_proj:
+        st.markdown(f"### 💬 {_chat_proj.name}")
+        st.caption(f"参数: {len(_chat_proj.parameters)} | 脚本: {len(_chat_proj.scripts)}")
+    else:
+        st.markdown("### 💬 AI 助手")
+        st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
+
+    # Chat history
+    for _msg in st.session_state.chat_history:
+        st.chat_message(_msg["role"]).markdown(_msg["content"])
+
+    # Live agent output placeholder (anchored inside this column)
+    live_output = st.empty()
+
+    # Chat input — scoped to this column, not full-width bottom bar
+    user_input = st.chat_input(
+        "描述需求或提问，如「创建一个宽 600mm 的书架」"
+    )
+
+
+# ══════════════════════════════════════════════════════════
+#  Chat handler (outside columns — session state + rerun)
+# ══════════════════════════════════════════════════════════
 
 if user_input:
-    # Add user message to history
     st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-    # Check API key first
     if not api_key and "ollama" not in model_name:
         err = "❌ 请在左侧边栏填入 API Key 后再试。"
         st.session_state.chat_history.append({"role": "assistant", "content": err})
         st.rerun()
     else:
         llm_for_classify = get_llm()
-
-        # ── Intent + Name in ONE call ──
         intent, gdl_obj_name = classify_and_extract(
             user_input, llm_for_classify,
             project_loaded=bool(st.session_state.project),
@@ -1195,16 +1154,13 @@ if user_input:
             st.chat_message("user").markdown(user_input)
             with st.chat_message("assistant"):
                 if intent == "CHAT":
-                    # ── Casual conversation — no project creation, no agent ──
                     msg = chat_respond(
                         user_input,
                         st.session_state.chat_history[:-1],
                         llm_for_classify,
                     )
                     st.markdown(msg)
-
                 else:
-                    # ── GDL intent — create project if needed, then run agent ──
                     if not st.session_state.project:
                         new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                         st.session_state.project = new_proj
@@ -1212,12 +1168,11 @@ if user_input:
                         st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                     proj_current = st.session_state.project
-                    # Keep existing gsm_name if project already loaded
-                    effective_gsm = (
-                        st.session_state.pending_gsm_name
-                        or proj_current.name
+                    effective_gsm = st.session_state.pending_gsm_name or proj_current.name
+                    msg = run_agent_generate(
+                        user_input, proj_current, st.container(),
+                        gsm_name=effective_gsm,
                     )
-                    msg = run_agent_generate(user_input, proj_current, st.container(), gsm_name=effective_gsm)
                     st.markdown(msg)
 
         st.session_state.chat_history.append({"role": "assistant", "content": msg})
