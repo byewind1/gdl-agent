@@ -32,6 +32,7 @@ dev = [
 ]
 ui = [
     "streamlit>=1.30.0",
+    "streamlit-ace>=0.1.1",
 ]
 local = [
     "ollama>=0.2.0",

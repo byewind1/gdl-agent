@@ -13,6 +13,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
+try:
+    from streamlit_ace import st_ace
+    _ACE_AVAILABLE = True
+except ImportError:
+    _ACE_AVAILABLE = False
 
 from gdl_agent.hsf_project import HSFProject, ScriptType, GDLParameter
 from gdl_agent.gdl_parser import parse_gdl_source, parse_gdl_file
@@ -1181,10 +1186,27 @@ with col_editor:
 
             current_code = proj_now.get_script(stype) or ""
             skey = fpath.replace("scripts/", "").replace(".gdl", "")
-            new_code = st.text_area(
-                label, value=current_code, height=420,
-                key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
-            )
+
+            if _ACE_AVAILABLE:
+                new_code = st_ace(
+                    value=current_code,
+                    language="fortran",   # closest built-in: `!` comments + keyword structure
+                    theme="monokai",
+                    height=420,
+                    font_size=14,
+                    tab_size=2,
+                    show_gutter=True,
+                    show_print_margin=False,
+                    wrap=False,
+                    auto_update=True,
+                    key=f"ace_{fpath}_v{_ev}",
+                ) or ""
+            else:
+                new_code = st.text_area(
+                    label, value=current_code, height=420,
+                    key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
+                ) or ""
+
             if new_code != current_code:
                 proj_now.set_script(stype, new_code)
             if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
