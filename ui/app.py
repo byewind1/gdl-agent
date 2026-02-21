@@ -87,24 +87,15 @@ code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
     margin-bottom: 4px;
 }
 
-/* ── Independent column scrolling ─────────────────────── */
-/* Lock viewport height and let each column scroll independently */
-section[data-testid="stMain"] > div:first-child {
-    overflow: hidden;
-    max-height: 100vh;
+/* ── Column gap tighten ─────────────────────────────────── */
+/* Streamlit "small" gap still has padding; pull columns closer */
+div[data-testid="stHorizontalBlock"] {
+    gap: 1rem !important;
 }
-/* Left editor column */
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:first-child {
-    height: calc(100vh - 80px);
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 4px;
-}
-/* Right chat column — scrollbar always visible */
+/* Subtle divider between editor and chat */
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child {
-    height: calc(100vh - 80px);
-    overflow-y: scroll;   /* always show scrollbar */
-    overflow-x: hidden;
+    border-left: 1px solid #1e293b;
+    padding-left: 0.75rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1054,7 +1045,7 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
 #  Layout: Editor (left/main) | AI Chat (right sidebar)
 # ══════════════════════════════════════════════════════════
 
-col_editor, col_chat = st.columns([3, 2], gap="medium")
+col_editor, col_chat = st.columns([3, 2], gap="small")
 
 
 # ── Left: Code Editor (always visible) ───────────────────
@@ -1292,8 +1283,8 @@ with col_editor:
                     value=current_code,
                     language="fortran",   # closest built-in: `!` comments + keyword structure
                     theme="monokai",
-                    height=420,
-                    font_size=14,
+                    height=280,
+                    font_size=13,
                     tab_size=2,
                     show_gutter=True,
                     show_print_margin=False,
@@ -1305,7 +1296,7 @@ with col_editor:
                 new_code = _raw_ace if _raw_ace is not None else current_code
             else:
                 new_code = st.text_area(
-                    label, value=current_code, height=420,
+                    label, value=current_code, height=280,
                     key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
                 ) or ""  # text_area never returns None; empty string is a valid clear
 
@@ -1384,21 +1375,7 @@ with col_chat:
     # Live agent output placeholder (anchored inside this column)
     live_output = st.empty()
 
-    # Auto-scroll chat to bottom via JS
-    st.components.v1.html(
-        """<script>
-        (function() {
-            var cols = window.parent.document.querySelectorAll('[data-testid="stColumn"]');
-            if (cols.length > 1) {
-                var chat = cols[cols.length - 1];
-                chat.scrollTop = chat.scrollHeight;
-            }
-        })();
-        </script>""",
-        height=0,
-    )
-
-    # Chat input — scoped to this column, not full-width bottom bar
+    # Chat input — immediately below the message list / action bars
     user_input = st.chat_input(
         "描述需求或提问，如「创建一个宽 600mm 的书架」"
     )
