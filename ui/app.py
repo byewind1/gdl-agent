@@ -86,6 +86,26 @@ code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
     font-family: 'JetBrains Mono', monospace;
     margin-bottom: 4px;
 }
+
+/* ── Independent column scrolling ─────────────────────── */
+/* Lock viewport height and let each column scroll independently */
+section[data-testid="stMain"] > div:first-child {
+    overflow: hidden;
+    max-height: 100vh;
+}
+/* Left editor column */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:first-child {
+    height: calc(100vh - 80px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+}
+/* Right chat column — scrollbar always visible */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child {
+    height: calc(100vh - 80px);
+    overflow-y: scroll;   /* always show scrollbar */
+    overflow-x: hidden;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -282,10 +302,10 @@ with st.sidebar:
         st.subheader(f"📦 {proj.name}")
         st.caption(f"参数: {len(proj.parameters)} | 脚本: {len(proj.scripts)}")
         if st.button("🗑️ 清除项目", use_container_width=True):
-            _keep_work_dir = st.session_state.work_dir
-            _keep_api_keys = st.session_state.model_api_keys
+            _keep_work_dir  = st.session_state.work_dir
+            _keep_api_keys  = st.session_state.model_api_keys
+            _keep_chat      = st.session_state.chat_history   # preserve chat
             st.session_state.project          = None
-            st.session_state.chat_history     = []
             st.session_state.compile_log      = []
             st.session_state.pending_diffs    = {}
             st.session_state.pending_gsm_name = ""
@@ -294,10 +314,63 @@ with st.sidebar:
             st.session_state.editor_version  += 1
             st.session_state.work_dir         = _keep_work_dir
             st.session_state.model_api_keys   = _keep_api_keys
+            st.session_state.chat_history     = _keep_chat
             st.rerun()
 
 
 # ── Helper Functions ──────────────────────────────────────
+
+import json as _json, datetime as _datetime
+
+def _save_feedback(msg_idx: int, rating: str, content: str) -> None:
+    """Save 👍/👎 feedback to work_dir/feedback.jsonl (local only, not sent anywhere)."""
+    try:
+        feedback_path = Path(st.session_state.work_dir) / "feedback.jsonl"
+        feedback_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": _datetime.datetime.now().isoformat(),
+            "rating": rating,           # "positive" | "negative"
+            "msg_idx": msg_idx,
+            "preview": content[:300],
+        }
+        with open(feedback_path, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass   # never let feedback save break the UI
+
+
+# ── Fullscreen editor dialog (Streamlit ≥ 1.36) ───────────
+_HAS_DIALOG = hasattr(st, "dialog")
+
+if _HAS_DIALOG:
+    @st.dialog("⛶ 全屏编辑", width="large")
+    def _fullscreen_editor_dialog(stype: "ScriptType", fpath: str, label: str) -> None:
+        st.caption(f"**{label}** 脚本 · 全屏模式 — 编辑完成点「✅ 应用」")
+        code = (st.session_state.project or HSFProject.create_new("untitled")).get_script(stype) or ""
+        if _ACE_AVAILABLE:
+            new_code = st_ace(
+                value=code, language="fortran", theme="monokai",
+                height=580, font_size=14, tab_size=2,
+                show_gutter=True, show_print_margin=False,
+                auto_update=True, key=f"fs_ace_{fpath}",
+            ) or ""
+        else:
+            new_code = st.text_area("code", value=code, height=580,
+                                    label_visibility="collapsed", key=f"fs_ta_{fpath}") or ""
+        c1, c2 = st.columns([2, 6])
+        with c1:
+            if st.button("✅ 应用", type="primary", use_container_width=True):
+                if st.session_state.project:
+                    st.session_state.project.set_script(stype, new_code)
+                    st.session_state.editor_version += 1
+                st.rerun()
+        with c2:
+            if st.button("❌ 取消", use_container_width=True):
+                st.rerun()
+else:
+    def _fullscreen_editor_dialog(stype, fpath, label):  # type: ignore[misc]
+        st.info("全屏编辑需要 Streamlit ≥ 1.36，请升级：`pip install -U streamlit`")
+
 
 def get_compiler():
     if compiler_mode.startswith("Mock"):
@@ -1115,25 +1188,25 @@ with col_editor:
 
     # ── 清空确认 ──────────────────────────────────────────
     if st.session_state.get("confirm_clear"):
-        st.warning("⚠️ 将重置整个项目（脚本、参数、对话记录、编译日志），保留工作目录和 API 设置。确认继续？")
+        st.warning("⚠️ 将重置项目（脚本、参数、编译日志），聊天记录保留。确认继续？")
         cc1, cc2, _ = st.columns([1, 1, 4])
         with cc1:
             if st.button("✅ 确认清空", type="primary"):
-                # Full project state reset — equivalent to Cmd+R but keeps user settings
                 _keep_work_dir = st.session_state.work_dir
                 _keep_api_keys = st.session_state.model_api_keys
-                st.session_state.project         = None
-                st.session_state.chat_history    = []
-                st.session_state.compile_log     = []
-                st.session_state.pending_diffs   = {}
+                _keep_chat     = st.session_state.chat_history   # preserve chat
+                st.session_state.project          = None
+                st.session_state.compile_log      = []
+                st.session_state.pending_diffs    = {}
                 st.session_state.pending_gsm_name = ""
-                st.session_state.agent_running   = False
-                st.session_state._import_key_done = ""   # allow re-importing same file
-                st.session_state.confirm_clear   = False
-                st.session_state.editor_version += 1
-                st.session_state.work_dir        = _keep_work_dir
-                st.session_state.model_api_keys  = _keep_api_keys
-                st.toast("🗑️ 已重置项目（脚本、参数、对话、日志）", icon="✅")
+                st.session_state.agent_running    = False
+                st.session_state._import_key_done = ""
+                st.session_state.confirm_clear    = False
+                st.session_state.editor_version  += 1
+                st.session_state.work_dir         = _keep_work_dir
+                st.session_state.model_api_keys   = _keep_api_keys
+                st.session_state.chat_history     = _keep_chat
+                st.toast("🗑️ 已重置项目（脚本、参数、日志），聊天记录保留", icon="✅")
                 st.rerun()
         with cc2:
             if st.button("❌ 取消"):
@@ -1201,8 +1274,14 @@ with col_editor:
     # Script tabs
     for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
         with tab:
-            with st.expander(f"ℹ️ {label} 脚本说明"):
-                st.markdown(_SCRIPT_HELP.get(fpath, ""))
+            _tab_help_col, _tab_fs_col = st.columns([6, 1])
+            with _tab_help_col:
+                with st.expander(f"ℹ️ {label} 脚本说明"):
+                    st.markdown(_SCRIPT_HELP.get(fpath, ""))
+            with _tab_fs_col:
+                if st.button("⛶", key=f"fs_{fpath}_v{_ev}",
+                             help="全屏编辑", use_container_width=True):
+                    _fullscreen_editor_dialog(stype, fpath, label)
 
             current_code = proj_now.get_script(stype) or ""
             skey = fpath.replace("scripts/", "").replace(".gdl", "")
@@ -1267,12 +1346,54 @@ with col_chat:
         st.markdown("### 💬 AI 助手")
         st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
 
-    # Chat history
-    for _msg in st.session_state.chat_history:
-        st.chat_message(_msg["role"]).markdown(_msg["content"])
+    # Chat history with action bar on each assistant message
+    for _i, _msg in enumerate(st.session_state.chat_history):
+        with st.chat_message(_msg["role"]):
+            st.markdown(_msg["content"])
+            if _msg["role"] == "assistant":
+                _ca, _cb, _cc, _cd, _ce = st.columns([1, 1, 1, 1, 8])
+                with _ca:
+                    if st.button("👍", key=f"like_{_i}", help="有帮助"):
+                        _save_feedback(_i, "positive", _msg["content"])
+                        st.toast("已记录 👍", icon="✅")
+                with _cb:
+                    if st.button("👎", key=f"dislike_{_i}", help="需改进"):
+                        _save_feedback(_i, "negative", _msg["content"])
+                        st.toast("已记录 👎，感谢反馈")
+                with _cc:
+                    if st.button("📋", key=f"copy_{_i}", help="展开可复制内容"):
+                        _flag = f"_showcopy_{_i}"
+                        st.session_state[_flag] = not st.session_state.get(_flag, False)
+                with _cd:
+                    _prev_user = next(
+                        (st.session_state.chat_history[j]["content"]
+                         for j in range(_i - 1, -1, -1)
+                         if st.session_state.chat_history[j]["role"] == "user"),
+                        None,
+                    )
+                    if _prev_user and st.button("🔄", key=f"redo_{_i}", help="重新生成"):
+                        st.session_state.chat_history = st.session_state.chat_history[:_i]
+                        st.session_state["_redo_input"] = _prev_user
+                        st.rerun()
+        if st.session_state.get(f"_showcopy_{_i}", False):
+            st.code(_msg["content"], language="text")
 
     # Live agent output placeholder (anchored inside this column)
     live_output = st.empty()
+
+    # Auto-scroll chat to bottom via JS
+    st.components.v1.html(
+        """<script>
+        (function() {
+            var cols = window.parent.document.querySelectorAll('[data-testid="stColumn"]');
+            if (cols.length > 1) {
+                var chat = cols[cols.length - 1];
+                chat.scrollTop = chat.scrollHeight;
+            }
+        })();
+        </script>""",
+        height=0,
+    )
 
     # Chat input — scoped to this column, not full-width bottom bar
     user_input = st.chat_input(
@@ -1284,8 +1405,14 @@ with col_chat:
 #  Chat handler (outside columns — session state + rerun)
 # ══════════════════════════════════════════════════════════
 
-if user_input:
-    st.session_state.chat_history.append({"role": "user", "content": user_input})
+_redo_input = st.session_state.pop("_redo_input", None)
+effective_input = _redo_input or user_input
+
+if effective_input:
+    # Redo: user msg already in history; new: append it
+    if not _redo_input:
+        st.session_state.chat_history.append({"role": "user", "content": effective_input})
+    user_input = effective_input   # alias for rest of handler
 
     if not api_key and "ollama" not in model_name:
         err = "❌ 请在左侧边栏填入 API Key 后再试。"
