@@ -1,478 +1,534 @@
-# GDL Agent 测试程序部署指南
+# gdl-agent v0.5 用户手册
 
-## 🎯 核心问题：测试程序应该放在哪里？
-
-答案取决于**使用场景**。有3种部署方式：
-
----
-
-## 📁 方案A：独立发布（推荐 ⭐⭐⭐⭐⭐）
-
-### **位置结构**
-```
-你的GitHub仓库:
-├── gdl-agent/                    # 主项目（开发者看的）
-│   ├── src/
-│   │   └── gdl_agent/
-│   ├── tests/                    # 开发者的pytest测试
-│   ├── README.md
-│   └── ...
-│
-└── releases/                     # 发布包（建筑师下载的）
-    ├── windows/
-    │   └── test_gdl_simple.py
-    └── macos/
-        ├── GDL测试工具.command
-        ├── test_gdl_simple.py
-        └── README_macOS.txt
-```
-
-### **实际操作**
-
-#### 选项1：作为GitHub Release附件
-```bash
-# 你在本地打包
-./build_macos_release.sh
-
-# 在GitHub上创建Release
-# 把生成的ZIP上传为附件
-
-# 用户下载路径：
-# https://github.com/byewind/gdl-agent/releases/download/v1.0/GDL-Agent-Tester-macOS-1.0.zip
-```
-
-**README.md 中写**：
-```markdown
-## 快速测试
-
-### Windows用户
-下载 [test_gdl_simple.py](链接)，双击运行
-
-### macOS用户  
-下载 [GDL-Agent-Tester-macOS.zip](链接)，解压后双击.command文件
-
-不需要安装gdl-agent包，这是独立的测试工具。
-```
-
-**优点**：
-- ✅ 建筑师不需要克隆整个仓库
-- ✅ 不需要安装依赖
-- ✅ 文件小（<20KB vs 整个项目>1MB）
-- ✅ 下载快
-
-**缺点**：
-- ❌ 需要手动维护Release版本
-- ❌ 代码更新后要重新发布
+> 对应版本：v0.5 pre-release
+> 适用对象：使用 ArchiCAD GDL 开发库对象的建筑师及 BIM 工程师
 
 ---
 
-## 📁 方案B：嵌入主项目（适合进阶用户 ⭐⭐⭐）
+## 目录
 
-### **位置结构**
-```
-gdl-agent/
-├── src/
-│   └── gdl_agent/               # 核心代码
-│       ├── __init__.py
-│       ├── core.py
-│       ├── compiler.py
-│       └── xml_handler.py
-│
-├── tests/                       # 开发者的自动化测试
-│   ├── test_core.py
-│   └── test_compiler.py
-│
-├── playground/                  # 🎨 用户测试区（新增）
-│   ├── README.md               # "如何使用测试工具"
-│   ├── test_gdl_simple.py      # 通用测试脚本
-│   ├── GDL测试工具.command      # macOS启动器
-│   └── examples/               # 示例GDL文件
-│       ├── simple_box.xml
-│       └── parametric_window.xml
-│
-├── README.md
-└── pyproject.toml
-```
-
-### **实际操作**
-
-**README.md 主文档**：
-```markdown
-## 安装
-
-### 开发者（想参与开发）
-```bash
-git clone https://github.com/byewind/gdl-agent.git
-cd gdl-agent
-pip install -e .
-```
-
-### 建筑师（只想测试）
-```bash
-git clone https://github.com/byewind/gdl-agent.git
-cd gdl-agent/playground
-
-# Windows:
-python test_gdl_simple.py
-
-# macOS:
-./GDL测试工具.command
-```
-
-或者直接下载 `playground` 文件夹即可。
-```
-
-**playground/README.md**：
-```markdown
-# GDL Agent 测试工具
-
-这个文件夹包含用户友好的测试工具，不需要安装gdl-agent包。
-
-## 快速开始
-
-### Windows
-双击 `test_gdl_simple.py`
-
-### macOS
-双击 `GDL测试工具.command`
-
-## 文件说明
-- `test_gdl_simple.py` - 核心测试程序
-- `GDL测试工具.command` - macOS启动器
-- `examples/` - 示例GDL文件
-```
-
-**优点**：
-- ✅ 用户可以 `git pull` 更新
-- ✅ 代码和测试工具在同一个仓库
-- ✅ 容易维护（改一次就同步）
-
-**缺点**：
-- ❌ 用户需要克隆整个仓库
-- ❌ 不懂Git的建筑师可能困惑
+1. [界面总览](#1-界面总览)
+2. [侧边栏](#2-侧边栏)
+3. [编辑器栏（左侧）](#3-编辑器栏左侧)
+   - 3.1 [顶部操作按钮](#31-顶部操作按钮)
+   - 3.2 [参数表（Params Tab）](#32-参数表params-tab)
+   - 3.3 [脚本标签页](#33-脚本标签页)
+   - 3.4 [日志标签页](#34-日志标签页)
+4. [AI 对话栏（右侧）](#4-ai-对话栏右侧)
+   - 4.1 [消息操作栏](#41-消息操作栏)
+   - 4.2 [确认写入面板](#42-确认写入面板)
+   - 4.3 [对话输入框](#43-对话输入框)
+5. [工作流 A：从零创建库对象](#5-工作流-a从零创建库对象)
+6. [工作流 B：导入 .gsm 文件修改](#6-工作流-b导入-gsm-文件修改)
+7. [工作流 C：AI Debug 已有脚本](#7-工作流-cai-debug-已有脚本)
+8. [配置详解](#8-配置详解)
+   - 8.1 [config.toml](#81-configtoml)
+   - 8.2 [LP_XMLConverter 配置](#82-lp_xmlconverter-配置)
+9. [常见问题](#9-常见问题)
+10. [快捷键与技巧](#10-快捷键与技巧)
 
 ---
 
-## 📁 方案C：混合方案（最灵活 ⭐⭐⭐⭐⭐ 强烈推荐）
+## 1. 界面总览
 
-结合A和B的优点：
+启动后浏览器打开如下三栏布局：
 
-### **项目结构**
 ```
-gdl-agent/
-├── src/gdl_agent/              # 核心代码
-├── tests/                      # pytest测试（开发者用）
-├── tools/                      # 🔧 用户工具（新增）
-│   └── standalone-tester/      # 独立测试器
-│       ├── README.md
-│       ├── build.sh            # 打包脚本
-│       ├── test_gdl_simple.py
-│       └── macos/
-│           ├── GDL测试工具.command
-│           └── README_macOS.txt
-│
-├── README.md
-└── .github/
-    └── workflows/
-        └── release.yml         # 自动发布
+┌──────────────────┬──────────────────────────────────┬──────────────────────┐
+│    侧边栏         │    编辑器栏（左/宽）               │  AI 对话栏（右/窄）  │
+│  · 模型选择       │  · 导入 / 编译 / 提取 / 检查按钮  │  · 消息历史          │
+│  · API Key       │  · 参数表 + 6 个脚本 Tab          │  · 确认写入面板      │
+│  · LP_XMLConverter│  · 日志 Tab                      │  · 对话输入框        │
+└──────────────────┴──────────────────────────────────┴──────────────────────┘
 ```
 
-### **工作流程**
-
-#### 1. 开发阶段
-```bash
-# 你在 tools/standalone-tester/ 目录工作
-cd tools/standalone-tester
-vim test_gdl_simple.py  # 改进测试工具
-```
-
-#### 2. 测试阶段
-```bash
-# 本地测试
-python test_gdl_simple.py
-
-# 打包测试
-./build.sh
-# 生成 releases/GDL-Agent-Tester-*.zip
-```
-
-#### 3. 发布阶段（自动化）
-
-**创建 `.github/workflows/release.yml`**：
-```yaml
-name: Release Tester
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Build macOS package
-        run: |
-          cd tools/standalone-tester
-          chmod +x build.sh
-          ./build.sh
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            tools/standalone-tester/releases/*.zip
-            tools/standalone-tester/releases/*.sha256
-```
-
-**使用**：
-```bash
-# 你只需打tag
-git tag v1.0.0
-git push origin v1.0.0
-
-# GitHub Actions自动：
-# 1. 运行build.sh
-# 2. 创建Release
-# 3. 上传ZIP文件
-```
-
-#### 4. 用户下载
-
-**README.md 主文档**：
-```markdown
-## 快速测试（不需要安装）
-
-直接下载测试工具：
-- [Windows版](https://github.com/byewind/gdl-agent/releases/latest/download/test_gdl_simple.py)
-- [macOS版](https://github.com/byewind/gdl-agent/releases/latest/download/GDL-Agent-Tester-macOS.zip)
-
-双击运行即可，无需安装任何依赖。
-
-## 开发者安装
-
-如果你想参与开发：
-```bash
-git clone https://github.com/byewind/gdl-agent.git
-pip install -e .
-pytest tests/
-```
-```
-
-**优点**：
-- ✅ 代码在仓库里（容易维护）
-- ✅ 自动发布（push tag就行）
-- ✅ 用户体验最好（直接下载ZIP）
-- ✅ 分离关注点（开发者看 src/，用户下载 Release）
-
-**缺点**：
-- ❌ 需要配置GitHub Actions（但只配一次）
+所有操作均在同一页内完成，**不需要切换页面**。
 
 ---
 
-## 🎯 具体推荐
+## 2. 侧边栏
 
-### **如果你的项目现在是这样**：
+### 模型选择
 
-```
-gdl-agent/
-├── gdl_agent/
-│   ├── __init__.py
-│   ├── core.py
-│   └── compiler.py
-├── README.md
-└── pyproject.toml
-```
+下拉菜单列出全部支持的 LLM。首次使用选一个填好 API Key 即可，之后可随时切换。
 
-### **建议修改为**（方案C）：
+| 显示名 | 背后服务 | 特点 |
+|---|---|---|
+| claude-haiku-4.5 | Anthropic | 速度快，适合日常 |
+| claude-sonnet-4.5 | Anthropic | 综合最强，推荐首选 |
+| glm-4.7 / glm-4.7-flash | 智谱 | 国内免梯子，性价比高 |
+| gpt-4o / o3-mini | OpenAI | 国际通用 |
+| deepseek-chat / reasoner | DeepSeek | 推理能力强 |
+| gemini-2.5-flash / pro | Google | 上下文超长 |
+| qwen / deepseek-coder (Ollama) | 本地 | 无 API Key，离线可用 |
 
-```bash
-# 1. 创建工具目录
-mkdir -p tools/standalone-tester/macos
+> Ollama 需先在本机安装并启动 `ollama serve`，gdl-agent 自动连接 `http://localhost:11434`。
 
-# 2. 移动测试文件
-mv test_gdl_simple.py tools/standalone-tester/
-mv GDL测试工具.command tools/standalone-tester/macos/
-mv README_macOS.txt tools/standalone-tester/macos/
-mv build_macos_release.sh tools/standalone-tester/
+### API Key 输入
 
-# 3. 创建工具说明
-cat > tools/standalone-tester/README.md << 'EOF'
-# GDL Agent 独立测试工具
+每个服务商独立填写，保存在 `config.toml`（已加入 .gitignore，不会意外提交）。留空则该模型不可用。
 
-这个目录包含用户友好的测试工具，可以独立分发。
+### LP_XMLConverter 模式
 
-## 打包发布
+控制是否用真实 ArchiCAD 编译器进行 .gsm 转换：
 
-```bash
-./build_macos_release.sh
-# 生成 releases/ 目录
-```
+- **Mock 模式**（默认）：无需安装 ArchiCAD，生成占位 .gsm 用于流程测试
+- **真实模式**：填入 LP_XMLConverter 可执行文件完整路径后启用，输出可直接拖入 ArchiCAD
 
-## 手动测试
+### 🗑️ 清除项目
 
-```bash
-# Windows
-python test_gdl_simple.py
-
-# macOS
-cd macos && ./GDL测试工具.command
-```
-
-## 自动发布
-
-推送git tag即可自动发布：
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-EOF
-
-# 4. 提交
-git add tools/
-git commit -m "feat: add standalone tester tools"
-git push
-```
-
-### **更新主README.md**：
-
-```markdown
-# GDL Agent
-
-AI驱动的ArchiCAD参数化对象生成器
-
-## 🚀 快速开始
-
-### 只想测试？（建筑师）
-
-下载独立测试工具，无需安装：
-- **Windows**: [test_gdl_simple.py](https://github.com/byewind/gdl-agent/releases/latest/download/test_gdl_simple.py)
-- **macOS**: [GDL-Agent-Tester-macOS.zip](https://github.com/byewind/gdl-agent/releases/latest/download/GDL-Agent-Tester-macOS.zip)
-
-### 想要开发？（程序员）
-
-```bash
-git clone https://github.com/byewind/gdl-agent.git
-cd gdl-agent
-pip install -e .
-```
-
-详见[开发者文档](docs/DEVELOPMENT.md)
-
-## 📖 文档
-
-- [用户手册](docs/USER_GUIDE.md) - 建筑师看这个
-- [API文档](docs/API.md) - 开发者看这个
-- [测试工具说明](tools/standalone-tester/README.md)
-
-## 🤝 贡献
-
-欢迎贡献！请阅读[贡献指南](CONTRIBUTING.md)
-
-## 📜 许可证
-
-MIT License
-```
+重置当前 session 中的脚本、参数、对话历史和日志，侧边栏配置（模型/Key/路径）保留。
 
 ---
 
-## 📊 三种方案对比总结
+## 3. 编辑器栏（左侧）
 
-| 方案 | 适用场景 | 用户体验 | 维护成本 | 推荐度 |
-|------|---------|----------|----------|--------|
-| **A. 独立发布** | 项目早期，用户少 | ⭐⭐⭐⭐ | ⭐⭐ 需手动更新 | ⭐⭐⭐ |
-| **B. 嵌入项目** | 用户都懂Git | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ |
-| **C. 混合方案** | 项目成熟，用户多样 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+宽度占总界面约 60%，包含项目名称显示、操作按钮区、以及下方的 Tab 编辑区。
 
----
+### 3.1 顶部操作按钮
 
-## 🎯 立即行动建议
+#### 📂 导入文件
 
-### **今天（最简单）**
+支持以下文件类型：
 
-使用**方案A**：
-```bash
-# 1. 在GitHub创建Release
-# 2. 手动上传这些文件：
-#    - test_gdl_simple.py
-#    - GDL-Agent-Tester-macOS.zip
+| 扩展名 | 处理方式 |
+|---|---|
+| `.gsm` | 调用 LP_XMLConverter 解包为 HSF 目录结构，自动载入所有脚本和参数 |
+| `.gdl` / `.txt` | 直接作为 GDL 脚本文本导入，自动判断脚本类型（见下方说明） |
+| 任意文本文件 | 尝试解析为 GDL 内容 |
 
-# 3. 在README中添加下载链接
-```
+**脚本类型自动判断规则：**
 
-### **本周（标准做法）**
+1. 包含 `PROJECT2` / `RECT2` / `POLY2` → 2D Script
+2. 包含 `VALUES` / `LOCK`（且不含 `BLOCK`）→ Values & Locking Script
+3. 包含 `GLOB_` 变量 → Master Script
+4. 包含 `UI_CURRENT` / `DEFINE STYLE` → User Interface Script
+5. 参数格式（≥2 行 `Type Name = Value`）→ 识别为 paramlist
+6. 其他 → 默认 3D Script
 
-迁移到**方案C**：
-```bash
-# 1. 创建 tools/standalone-tester/ 目录
-# 2. 移动测试文件进去
-# 3. 配置GitHub Actions自动发布
-# 4. 打tag测试自动发布流程
-```
+#### 🔧 编译 GSM
 
-### **未来（锦上添花）**
+将当前编辑器内容（脚本 + 参数）打包编译为 `.gsm` 文件：
 
-添加更多工具：
-```
-tools/
-├── standalone-tester/    # 已有
-├── gdl-converter/        # GDL格式转换工具
-├── archicad-launcher/    # ArchiCAD快速启动工具
-└── template-generator/   # GDL模板生成器
-```
+- Mock 模式：秒级完成，输出 `{项目名}_vN.gsm`（N 自动递增）
+- 真实模式：调用 LP_XMLConverter，输出结果可直接用于 ArchiCAD
 
----
+编译成功后会显示文件路径，点击即可在 Finder/Explorer 定位（macOS 支持）。
 
-## 💡 关键原则
+> 每次编译自动追加版本号（v1, v2...），不覆盖历史版本，方便回退。
 
-1. **分离关注点**
-   - `src/` = 开发者关心的
-   - `tools/` = 用户使用的
-   - `tests/` = 自动化测试的
+#### 📥 提取
 
-2. **降低门槛**
-   - 用户不需要看到 `pytest`, `pip install`
-   - 用户只需要：下载 → 双击 → 完成
+扫描右侧 AI 对话历史，从所有代码块（`` ``` ``）中提取 GDL 脚本，自动分类后写入对应的脚本 Tab：
 
-3. **自动化一切**
-   - 打tag → 自动打包 → 自动发布
-   - 你只需要专注写代码
+- 如果对话中有多个同类型脚本，取**最后一个**（通常是最新版本）
+- 如果检测到 paramlist 格式内容，自动更新参数表
+- 提取完成后，脚本框会立即刷新显示新内容
 
-4. **文档清晰**
-   - README主文档：2分钟能看懂
-   - 进阶文档：放在 docs/ 目录
+> 适合手动从 AI 对话中批量同步脚本，也可用作"撤销 AI 写入"后的手动重提取。
+
+#### 🔍 全检查
+
+对所有非空脚本执行静态语法检查：
+
+- IF/ENDIF 配对
+- FOR/NEXT 配对
+- ADD/DEL 嵌套（3D Script）
+- 3D Script 末尾必须有 `END`
+- 2D Script 必须包含 `PROJECT2`
+
+检查结果显示在日志 Tab 内。
+
+#### 🗑️ 清空
+
+重置全部：脚本内容、参数表、对话历史、日志。会弹出二次确认避免误触。侧边栏设置不受影响。
 
 ---
 
-## 🎓 总结
+### 3.2 参数表（Params Tab）
 
-**最佳实践**：
+显示当前项目的所有 GDL 参数，对应 `paramlist.xml`。
+
+**每个参数字段：**
+
+| 字段 | 说明 |
+|---|---|
+| 名称（Name） | GDL 变量名，遵循 GDL 命名规则（字母开头，无空格） |
+| 类型（Type） | GDL 强类型：Length / Angle / RealNum / Integer / Boolean / String / PenColor / FillPattern / LineType / Material |
+| 默认值 | 在 ArchiCAD 界面中的初始值 |
+| 描述 | 可选，显示在 ArchiCAD 参数列表中 |
+
+**手动添加参数：**
+
+1. 展开"添加参数"折叠区
+2. 填写名称、选择类型、填写默认值（String 类型值会自动加引号）
+3. 点击"添加参数"按钮
+
+**验证参数：**
+
+点击"🔍 验证参数"检查参数名是否合法、类型是否有效，结果以 toast 提示显示。
+
+---
+
+### 3.3 脚本标签页
+
+共 6 个 Tab（对应 HSF 目录结构）：
+
+| Tab 标签 | 文件 | 用途 |
+|---|---|---|
+| 参数 | paramlist.xml | 参数定义（上方单独介绍） |
+| 📐 Master Script | scripts/1d.gdl | 全局变量初始化，运行于所有脚本之前 |
+| 📦 3D Script | scripts/3d.gdl | 3D 几何模型定义（BLOCK、CYLIND 等） |
+| 📄 2D Script | scripts/2d.gdl | 平面图符号（PROJECT2、LINE2 等） |
+| 🔒 Values/Lock | scripts/vl.gdl | 参数值列表和锁定规则 |
+| 🖥️ User Interface | scripts/ui.gdl | 自定义参数面板 |
+| 📋 日志 | — | 编译、检查、导入的操作记录 |
+
+**脚本编辑器功能：**
+
+- 语法高亮（使用 streamlit-ace，GDL 以 Fortran 模式渲染，关键字、字符串均着色）
+- 可在默认窗口直接编辑，**无需全屏**
+- 点击右上角 ⛶ 按钮打开全屏编辑器，提供更大编辑空间（580px 高，14pt 字体）
+- 全屏模式编辑完成后点击"✅ 应用"写回，"❌ 取消"放弃
+
+**每个脚本 Tab 的检查按钮（🔍 检查）：**
+
+只对当前脚本执行语法检查，结果以 toast 提示显示，比"全检查"更快定位单脚本问题。
+
+---
+
+### 3.4 日志标签页
+
+记录以下事件：
+
+- 文件导入（文件名、脚本数、参数数）
+- 编译结果（成功/失败、输出路径、版本号）
+- 语法检查结果（各脚本的通过/警告/错误详情）
+- AI 脚本写入记录（哪些脚本被更新）
+
+"清除日志"按钮清空当前 session 日志（不影响脚本内容）。
+
+---
+
+## 4. AI 对话栏（右侧）
+
+宽度约占界面 40%，从上到下依次：消息历史区 → 确认写入面板（仅在有待确认内容时显示）→ 对话输入框。
+
+### 4.1 消息操作栏
+
+每条 AI 回复消息下方有操作按钮行：
+
+| 按钮 | 功能 |
+|---|---|
+| 👍 | 标记"有帮助"，记录到 `feedback/` 目录供后续分析 |
+| 👎 | 标记"需改进"，同上 |
+| 📋 | 展开消息完整内容（支持复制），适合复制单段代码 |
+| 🔄 | 重新生成：用相同的用户输入再次调用 AI（适合结果不满意时） |
+
+---
+
+### 4.2 确认写入面板
+
+当 AI 对话中检测到新脚本，且当前项目**已有脚本内容**时（即非空项目的修改场景），系统不会自动覆盖，而是在消息历史下方显示确认面板：
 
 ```
-gdl-agent/
-├── src/                  # 核心代码（开发者）
-├── tests/                # 自动化测试（pytest）
-├── tools/                # 用户工具（建筑师）
-│   └── standalone-tester/
-├── docs/                 # 文档
-└── README.md            # 2分钟快速开始
+⬆️ 是否将 AI 生成的 3D Script + 参数(8项) 写入编辑器？
+[✅ 写入]  [❌ 忽略]
 ```
 
-**用户路径**：
-```
-GitHub Release页面 → 下载ZIP → 双击 → 测试
+- **✅ 写入**：将 AI 最新生成的所有脚本和参数写入对应编辑器，`editor_version` 自增刷新显示
+- **❌ 忽略**：清除待写入内容，保持编辑器现状不变
+
+> **空项目**（所有脚本均为空）时，AI 生成的内容会**自动写入**，无需确认。
+
+---
+
+### 4.3 对话输入框
+
+输入自然语言描述，按 `Enter` 或点击发送按钮。支持多行输入（`Shift+Enter` 换行）。
+
+**AI 意图自动判断：**
+
+系统根据关键词自动选择 AI 行为模式：
+
+| 触发词 | 模式 | 行为 |
+|---|---|---|
+| 为什么 / 检查 / 修复 / debug / 报错 | Debug 模式 | 注入全部脚本上下文，AI 可分析错误并输出修复代码 |
+| 其他描述性输入 | 生成模式 | 根据描述生成脚本，已有项目则自动理解上下文进行修改 |
+
+**Debug 模式说明：**
+
+开启后，发往 AI 的 prompt 包含当前所有非空脚本完整内容，AI 可以：
+
+- 定位错误行
+- 解释语法问题
+- 提供修复后的完整脚本（会触发确认写入面板）
+
+---
+
+## 5. 工作流 A：从零创建库对象
+
+适合：想用自然语言快速生成新 GDL 库对象的场景。
+
+**步骤：**
+
+1. 启动后侧边栏选择 LLM 模型，填写对应 API Key
+2. 编辑器栏此时所有脚本为空（新建状态）
+3. 在右侧对话框输入对象描述，例如：
+
+   ```
+   做一个矩形书架，宽度 w 默认 900mm，高度 h 默认 2100mm，深度 d 默认 300mm。
+   4 个等距层板，顶板和底板厚 25mm，层板厚 18mm。
+   材质参数 shelfMat 默认 "Wood"。
+   ```
+
+4. AI 生成 3D Script + 参数表，**自动写入**编辑器（空项目无需确认）
+5. 在脚本 Tab 检查生成结果，可手动微调
+6. 点击"🔧 编译 GSM"生成 .gsm 文件
+7. 将 .gsm 拖入 ArchiCAD 库管理器加载
+
+**提示：**
+
+- 首次对话后如需修改，直接继续描述（如"把层板改成 5 个"），AI 会在上下文基础上修改
+- 对话 AI 可以生成全部 6 个脚本，也可以只更新其中几个，取决于描述内容
+- 如果 AI 只生成了 3D Script，2D Script 可以另行描述补充，或手动编写
+
+---
+
+## 6. 工作流 B：导入 .gsm 文件修改
+
+适合：对已有的 GSM 库对象进行修改、增加参数、重构。
+
+**前提条件：** 侧边栏 LP_XMLConverter 模式选"真实"，并填写可执行文件路径（见第 8.2 节）。
+
+**步骤：**
+
+1. 点击"📂 导入文件"，拖入 `.gsm` 文件
+2. gdl-agent 调用 LP_XMLConverter 将 .gsm 解包为 HSF，自动载入：
+   - 所有 GDL 脚本（3D/2D/Master/Values/UI）
+   - 参数表（paramlist.xml）
+3. 在脚本 Tab 中查看导入结果，参数表中可见全部参数
+4. 在右侧对话框描述修改意图：
+
+   ```
+   给这个对象增加一个旋转角度参数 rotAngle，类型 Angle，默认值 0，
+   并在 3D Script 末尾加入围绕 Z 轴的旋转变换。
+   ```
+
+5. AI 生成修改版脚本，弹出**确认写入面板**（因为已有脚本内容）
+6. 检查 AI 生成的变更，点击"✅ 写入"接受，或"❌ 忽略"后自行修改
+7. 点击"🔧 编译 GSM"输出修改后的版本
+
+**注意事项：**
+
+- gsm 导入需要 ArchiCAD 已安装（LP_XMLConverter 是 ArchiCAD 的组件）
+- 如果导入失败，日志 Tab 会显示具体错误，常见原因是路径未配置或文件损坏
+- 导入成功后 Mock 模式和真实模式均可编译（真实模式输出才可用于 ArchiCAD）
+
+---
+
+## 7. 工作流 C：AI Debug 已有脚本
+
+适合：脚本有报错但不清楚原因，或需要 AI 协助优化结构。
+
+**步骤：**
+
+1. 先通过"📂 导入"或手动粘贴脚本进入编辑器
+2. 在右侧对话框输入 Debug 请求，关键词触发 Debug 模式：
+
+   ```
+   3D Script 在 ArchiCAD 里报 "Incorrect number of parameters" 错误，
+   帮我检查是哪里出了问题
+   ```
+
+3. 系统自动注入所有脚本上下文，AI 返回分析 + 修复代码
+4. 如果 AI 输出修复后的脚本，出现确认面板，点击"✅ 写入"应用
+5. 使用"📥 提取"或确认面板写入后，点击"🔍 全检查"验证修复结果
+6. 重新编译确认
+
+**Debug 模式中可以询问的问题类型：**
+
+- 语法错误定位（"报错在第几行"）
+- 逻辑问题（"为什么层板位置不对"）
+- GDL 最佳实践（"这段代码怎么优化"）
+- 脚本间一致性检查（"参数表和 3D Script 是否匹配"）
+
+---
+
+## 8. 配置详解
+
+### 8.1 config.toml
+
+首次运行如未发现 `config.toml`，gdl-agent 会从 `config.example.toml` 提示创建。
+
+完整配置字段说明：
+
+```toml
+[llm]
+# 当前使用的模型（与侧边栏选择联动，侧边栏修改会写回此处）
+model = "glm-4.7"
+
+[llm.provider_keys]
+# 填写对应服务商的 API Key，留空则该模型不可用
+zhipu     = "your-zhipu-api-key"
+anthropic = "your-anthropic-api-key"
+openai    = "your-openai-api-key"
+deepseek  = "your-deepseek-api-key"
+google    = "your-google-api-key"
+# Ollama 无需 API Key，本地自动连接
+
+[compiler]
+# LP_XMLConverter 可执行文件完整路径
+# 留空则使用 Mock 模式
+path = ""
+
+[compiler.work_dir]
+# 编译输出目录，默认当前目录下 temp/
+path = "temp"
 ```
 
-**开发者路径**：
+> `config.toml` 已加入 `.gitignore`，不会随代码提交。敏感 Key 不会泄露。
+
+---
+
+### 8.2 LP_XMLConverter 配置
+
+LP_XMLConverter 是 ArchiCAD 内置的 GSM↔HSF 转换工具，需要安装 ArchiCAD 才能使用。
+
+**macOS 路径（ArchiCAD 29）：**
+
 ```
-git clone → pip install -e . → pytest → 改代码 → git push
+/Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
 ```
 
-**维护路径**：
+**macOS 路径（ArchiCAD 28）：**
+
 ```
-改代码 → git commit → git tag v1.x → git push --tags → 自动发布
+/Applications/GRAPHISOFT/Archicad 28/Archicad 28.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
 ```
 
-这就是**现代开源项目的标准结构**！
+**Windows 路径（参考）：**
+
+```
+C:\Program Files\GRAPHISOFT\ARCHICAD 29\LP_XMLConverter.exe
+```
+
+**配置方式（任选其一）：**
+
+1. 在 `config.toml` 的 `[compiler]` → `path` 字段填写完整路径
+2. 在侧边栏"LP_XMLConverter 路径"输入框填写并回车，自动写入 config.toml
+
+**验证配置是否生效：**
+
+导入任意 .gsm 文件，如日志 Tab 显示脚本已成功载入则配置正确。
+
+---
+
+## 9. 常见问题
+
+**Q：导入 .gsm 后脚本框是空的？**
+
+A：最常见原因是 LP_XMLConverter 路径未配置。检查侧边栏是否已填写并保存路径，查看日志 Tab 中是否有错误信息。
+
+---
+
+**Q：AI 生成了脚本，但编辑器没有变化？**
+
+A：如果是已有内容的项目，需要在对话栏下方点击"✅ 写入"确认。如果是空项目，可能 AI 回复中没有代码块（AI 只给了文字说明），重新发一次带有明确代码要求的提示词。
+
+---
+
+**Q：编译报错 "LP_XMLConverter not found"？**
+
+A：路径配置问题。确认：
+- 路径指向的是可执行文件本身（不是 .app 目录）
+- macOS 上路径深入到 `.app/Contents/MacOS/LP_XMLConverter`
+- 文件有执行权限（`chmod +x` 如有需要）
+
+---
+
+**Q：streamlit-ace 编辑器显示为空白文本框？**
+
+A：`streamlit-ace` 未安装。运行 `pip install streamlit-ace` 后重启 Streamlit。功能降级为标准 `st.text_area`，可正常编辑但无语法高亮。
+
+---
+
+**Q：Ollama 模型无法连接？**
+
+A：确认 Ollama 服务已启动（`ollama serve`），且目标模型已拉取（`ollama pull qwen2.5:7b`）。gdl-agent 默认连接 `http://localhost:11434`。
+
+---
+
+**Q：提取（📥）按钮没有读取到最新 AI 生成的脚本？**
+
+A：检查 AI 回复中代码块是否用三个反引号包裹（\`\`\`....\`\`\`）。部分模型有时会用缩进代替代码块，这种格式无法自动识别，需手动复制到对应 Tab。
+
+---
+
+**Q：能否同时使用两个 LLM 模型？**
+
+A：当前版本不支持。每次对话使用侧边栏选择的单一模型。
+
+---
+
+**Q：参数表中的参数顺序会保留吗？**
+
+A：手动添加的参数追加到末尾，AI 生成的 paramlist 按 AI 输出顺序写入。编译时顺序与 `paramlist.xml` 中一致，ArchiCAD 参数面板显示顺序与之对应。
+
+---
+
+**Q：如何保存当前项目进度？**
+
+A：点击"🔧 编译 GSM"可生成版本化 .gsm 文件（本身就是保存格式）。HSF 目录结构保存在 `temp/` 下，可手动备份。当前版本无项目文件独立保存功能（计划 v0.6 加入）。
+
+---
+
+## 10. 快捷键与技巧
+
+### 脚本编辑器快捷键（streamlit-ace）
+
+| 快捷键 | 功能 |
+|---|---|
+| `Ctrl/Cmd + Z` | 撤销 |
+| `Ctrl/Cmd + Y` | 重做 |
+| `Ctrl/Cmd + D` | 选中当前行 |
+| `Ctrl/Cmd + /` | 注释/取消注释 |
+| `Ctrl/Cmd + F` | 在编辑器内搜索 |
+| `Tab` | 缩进（2 空格） |
+| `Shift + Tab` | 反缩进 |
+
+### 对话输入技巧
+
+**描述越具体，结果越好：**
+
+```
+❌ 模糊：做一个书架
+✅ 具体：做一个 GDL 书架对象，参数有宽 w(Length,900)、高 h(Length,2100)、深 d(Length,300)、
+         层板数 nShelves(Integer,4)、材质 mat(Material,"Wood")。
+         3D Script 用 BLOCK 做主体，层板等距排列，底部对齐 Z=0。
+```
+
+**修改描述不需要重复全部内容：**
+
+```
+在上一版基础上：把层板数改为 6，顶板加 10mm 厚度，
+另外新增一个布尔参数 hasDoor，true 时在正面添加 PLANE 模拟门板。
+```
+
+**Debug 请求模板：**
+
+```
+ArchiCAD 报错：[粘贴错误信息]
+发生在：[描述操作步骤]
+请检查脚本并给出修复版本
+```
+
+### 版本管理建议
+
+- 重大修改前先编译一个版本（.gsm 带版本号，方便回退）
+- `temp/` 目录下保留历史版本，不要手动清空
+- 对话历史在 session 内保留，刷新页面后清空——重要的 AI 生成代码建议用"📋"复制保存
+
+---
+
+*文档版本：v0.5 pre-release — 如发现文档与实际功能不符，欢迎在 GitHub Issues 反馈。*
