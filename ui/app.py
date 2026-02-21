@@ -348,12 +348,13 @@ if _HAS_DIALOG:
         st.caption(f"**{label}** 脚本 · 全屏模式 — 编辑完成点「✅ 应用」")
         code = (st.session_state.project or HSFProject.create_new("untitled")).get_script(stype) or ""
         if _ACE_AVAILABLE:
-            new_code = st_ace(
+            _raw_fs = st_ace(
                 value=code, language="fortran", theme="monokai",
                 height=580, font_size=14, tab_size=2,
                 show_gutter=True, show_print_margin=False,
-                auto_update=True, key=f"fs_ace_{fpath}",
-            ) or ""
+                key=f"fs_ace_{fpath}",
+            )
+            new_code = _raw_fs if _raw_fs is not None else code
         else:
             new_code = st.text_area("code", value=code, height=580,
                                     label_visibility="collapsed", key=f"fs_ta_{fpath}") or ""
@@ -1287,7 +1288,7 @@ with col_editor:
             skey = fpath.replace("scripts/", "").replace(".gdl", "")
 
             if _ACE_AVAILABLE:
-                new_code = st_ace(
+                _raw_ace = st_ace(
                     value=current_code,
                     language="fortran",   # closest built-in: `!` comments + keyword structure
                     theme="monokai",
@@ -1297,14 +1298,16 @@ with col_editor:
                     show_gutter=True,
                     show_print_margin=False,
                     wrap=False,
-                    auto_update=True,
                     key=f"ace_{fpath}_v{_ev}",
-                ) or ""
+                )
+                # st_ace returns None on first render (widget not yet initialized).
+                # NEVER let None → "" silently overwrite real script content.
+                new_code = _raw_ace if _raw_ace is not None else current_code
             else:
                 new_code = st.text_area(
                     label, value=current_code, height=420,
                     key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
-                ) or ""
+                ) or ""  # text_area never returns None; empty string is a valid clear
 
             if new_code != current_code:
                 proj_now.set_script(stype, new_code)
